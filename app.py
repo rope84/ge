@@ -70,10 +70,11 @@ def login_screen():
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
 
+    # Inline-CSS für Positionierung und Stil
     st.markdown(
-        """
+        f"""
         <style>
-        .footer {
+        .footer {{
             position: fixed;
             bottom: 10px;
             left: 12px;
@@ -83,36 +84,27 @@ def fixed_footer():
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
-        }
+        }}
+        .footer a {{
+            color: #bbb;
+            text-decoration: none;
+            font-weight: bold;
+        }}
+        .footer a:hover {{
+            color: white;
+            text-decoration: underline;
+        }}
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    # 👇 dynamischer Key: Username + "footer_user"
-    btn_key = f"footer_user_{st.session_state.get('username', 'guest')}"
-
-    if st.button(
-        f"👤 {st.session_state.get('username', 'Gast')}",
-        key=btn_key,
-        help="Profil öffnen",
-        use_container_width=False,
-    ):
-        st.session_state["go_profile"] = True
-        st.rerun()
-
-    st.markdown(
-        f"""
         <div class="footer">
+            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
             🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
- 
-    
-    
+   
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
