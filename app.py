@@ -17,23 +17,26 @@ seed_admin_if_empty()
 
 # ---------------- Dynamic Module Import ----------------
 # ---------------- Dynamic Module Import ----------------
+# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors = {}, {}
 
-    def try_import(name):
+    def try_import(qualified_name: str):
+        base = qualified_name.split(".")[-1]  # z.B. "start" aus "modules.start"
         try:
-            mod = __import__(name)
-            fn = getattr(mod, f"render_{name}")
-            modules[name] = fn
+            mod = __import__(qualified_name, fromlist=["*"])
+            fn = getattr(mod, f"render_{base}")  # erwartet z.B. render_start()
+            modules[base] = fn
         except Exception as e:
-            modules[name] = None
-            errors[name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
+            modules[base] = None
+            errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
     for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
-        try_import(f"modules.{mod_name}")  # <- angepasst für neue Ordnerstruktur
+        try_import(f"modules.{mod_name}")
 
     return modules, errors
-    modules, import_errors = import_modules()
+
+modules, import_errors = import_modules()
 
 # ---------------- Session Init ----------------
 def init_session():
