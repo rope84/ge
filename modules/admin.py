@@ -4,7 +4,7 @@ import shutil
 import time
 import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
@@ -108,6 +108,24 @@ def _set_meta(key: str, value: str):
         cn.commit()
 
 
+def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
+    with conn() as cn:
+        c = cn.cursor()
+        res = {}
+        for k in keys:
+            row = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+            res[k] = row[0] if row else None
+        return res
+
+
+def _set_meta_many(data: Dict[str, str]):
+    with conn() as cn:
+        c = cn.cursor()
+        for k, v in data.items():
+            c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (k, v))
+        cn.commit()
+
+
 def _insert_changelog(version: str, notes: List[str]):
     now = datetime.datetime.now().isoformat(timespec="seconds")
     with conn() as cn:
@@ -174,6 +192,13 @@ def _format_size(bytes_: int) -> str:
     return f"{bytes_ / (1024 * 1024):.1f} MB"
 
 
+def _db_size_mb() -> float:
+    try:
+        return round(DB_PATH.stat().st_size / (1024 * 1024), 2)
+    except Exception:
+        return 0.0
+
+
 # ---------------- UI Helpers (Badges / Status) ----------------
 def _role_badge(role: str) -> str:
     colors = {
@@ -195,17 +220,34 @@ def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
     Backup-Regeln: None => rot (kein Backup); <=5 grün; 6-7 gelb; >7 rot.
     """
     if days is None:
-        return ("red", "Kein Backup", "Es wurde noch kein Backup gefunden.")
+        return ("#ef4444", "Kein Backup", "Es wurde noch kein Backup gefunden.")
     if days <= 5:
-        return ("green", "Aktuell", f"Letztes Backup ist {days} Tag(e) alt.")
+        return ("#22c55e", "Aktuell", f"Letztes Backup ist {days} Tag(e) alt.")
     if days <= 7:
-        return ("gold", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
-    return ("red", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
+        return ("#f59e0b", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
+    return ("#ef4444", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
+
+
+def _small_status_card(title: str, color: str, lines: List[str]) -> str:
+    """
+    Gibt ein kleines HTML-Card-Snippet zurück.
+    """
+    body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
+    return f"""
+    <div style="
+        display:flex; gap:10px; align-items:flex-start;
+        background:rgba(255,255,255,0.03); padding:10px 12px; border-radius:10px;">
+      <span style='display:inline-block; width:10px; height:10px; border-radius:50%; margin-top:4px; background:{color};'></span>
+      <div style='font-size:13px;'>
+        <b>{title}</b><br/>{body}
+      </div>
+    </div>
+    """
 
 
 # ---------------- Übersicht / Dashboard ----------------
 def _render_home():
-    section_title("Systemstatus")
+    section_title("Überblick")
 
     # Live-Zahlen
     users_cnt = _count_rows("users")
@@ -215,84 +257,64 @@ def _render_home():
     # Backup-Status
     last_bkp_dt = _last_backup_time()
     days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
-    badge_color, badge_label, badge_tip = _status_badge_from_days(days_since)
+    color, label, tip = _status_badge_from_days(days_since)
 
-    # System-Hinweise
+    # Systemhinweise
     issues = []
     if users_cnt == 0:
         issues.append("Keine Benutzer angelegt.")
     if emp_cnt == 0:
         issues.append("Keine Mitarbeiter angelegt.")
-    if badge_color in ("gold", "red"):
-        issues.append(badge_tip)
+    if color in ("#f59e0b", "#ef4444"):
+        issues.append(tip)
 
-    # Eine Zeile: links kompakter Systemblock, rechts Inline-Details
-    left, right = st.columns([5, 3])
+    # DB-Größe
+    db_size = _db_size_mb()
+
+    # ---- Zwei Karten nebeneinander: Systemstatus / Backupstatus ----
+    left, right = st.columns(2, gap="large")
+
     with left:
         today_str = datetime.date.today().strftime("%d.%m.%Y")
+        html = _small_status_card(
+            "Systemstatus",
+            "#22c55e" if not issues else "#f59e0b" if any("empfohlen" in x for x in issues) else "#ef4444",
+            [
+                f"Prüfung: {today_str}",
+                f"Benutzer: {users_cnt}",
+                f"Mitarbeiter: {emp_cnt}",
+                f"Fixkosten: {fix_cnt}",
+                f"Datenbankgröße: {db_size} MB"
+            ]
+        )
+        st.markdown(html, unsafe_allow_html=True)
+
+    with right:
+        last_text = "—"
+        if last_bkp_dt:
+            last_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
+        html_b = _small_status_card(
+            "Backupstatus",
+            color,
+            [
+                f"Status: {label}",
+                f"Info: {tip}",
+                f"Letztes Backup: {last_text}"
+            ]
+        )
+        st.markdown(html_b, unsafe_allow_html=True)
+
+    # Inline-Details (neben den Karten war gewünscht; hier kompakt in einer Zeile darunter)
+    if issues:
         st.markdown(
-            f"""
-            <div style='display:flex; gap:10px; align-items:center;
-                        background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:10px;'>
-              <span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:{badge_color};'></span>
-              <div style='font-size:13px;'>
-                <b>Status: {badge_label}</b>
-                <span title="Systemprüfung und letzte Sicherung" style="opacity:0.7; cursor:help;">ⓘ</span><br>
-                <span style='font-size:12px; opacity:0.85;'>Prüfung: {today_str}</span>
-              </div>
-            </div>
-            """,
+            "<div style='margin-top:6px; font-size:12px; opacity:0.9;'>"
+            "🔍 <b>Details:</b> " + " · ".join(issues) + "</div>",
             unsafe_allow_html=True
         )
-    with right:
-        if issues:
-            with st.expander("🔍 Details", expanded=False):
-                for d in issues:
-                    st.markdown(f"- {d}")
-        else:
-            st.caption("🟢 Keine Hinweise")
-
-    # KPIs kompakt
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Version", APP_VERSION)
-    c2.metric("Benutzer", users_cnt)
-    c3.metric("Mitarbeiter", emp_cnt)
+    else:
+        st.caption("🟢 Keine Hinweise")
 
     st.divider()
-
-        # Backup-Status (separater Block – ohne Tabellen/Charts)
-    section_title("Backup")
-
-    last_text = "—"
-    if last_bkp_dt:
-        last_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
-
-    bl, br = st.columns([5, 3])
-
-    with bl:
-        st.markdown(
-            f"""
-            <div style='display:flex; gap:10px; align-items:center;
-                        background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:10px;'>
-              <span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:{badge_color};'></span>
-              <div style='font-size:13px;'>
-                <b>Backup-Status: {badge_label}</b>
-                <span title="{badge_tip}" style="opacity:0.7; cursor:help;">ⓘ</span><br>
-                <span style='font-size:12px; opacity:0.85;'>Letztes Backup: <b>{last_text}</b></span>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with br:
-        if st.button("🧷 Backup jetzt erstellen", key="bkp_create_home", use_container_width=True):
-            created = _create_backup()
-            if created:
-                st.success(f"Backup erstellt: {created.name}")
-            time.sleep(1)
-            st.rerun()
-    st.markdown("---")
 
     # Changelog klein & aktuell
     section_title("📝 Änderungsprotokoll (Changelog)")
@@ -309,6 +331,58 @@ def _render_home():
                 f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
                 unsafe_allow_html=True
             )
+
+
+# ---------------- Betrieb (Grundparameter) ----------------
+def _render_business_admin():
+    section_title("🏢 Grundparameter des Betriebs")
+
+    keys = [
+        "business_name",
+        "business_street",
+        "business_zip",
+        "business_city",
+        "business_phone",
+        "business_email",
+        "business_uid",
+        "business_iban",
+        "business_note",
+    ]
+    values = _get_meta_many(keys)
+
+    with st.form("business_form"):
+        a, b = st.columns([2, 2])
+        name = a.text_input("Name des Betriebs", value=values.get("business_name") or "")
+        phone = b.text_input("Telefon", value=values.get("business_phone") or "")
+
+        c, d = st.columns([3, 1])
+        street = c.text_input("Straße & Hausnummer", value=values.get("business_street") or "")
+        zip_code = d.text_input("PLZ", value=values.get("business_zip") or "")
+
+        city = st.text_input("Ort / Stadt", value=values.get("business_city") or "")
+
+        e, f = st.columns(2)
+        email = e.text_input("E-Mail", value=values.get("business_email") or "")
+        uid = f.text_input("UID", value=values.get("business_uid") or "")
+
+        g, h = st.columns(2)
+        iban = g.text_input("IBAN", value=values.get("business_iban") or "")
+        note = h.text_input("Notiz (optional)", value=values.get("business_note") or "")
+
+        saved = st.form_submit_button("💾 Speichern", use_container_width=True)
+        if saved:
+            _set_meta_many({
+                "business_name": name,
+                "business_street": street,
+                "business_zip": zip_code,
+                "business_city": city,
+                "business_phone": phone,
+                "business_email": email,
+                "business_uid": uid,
+                "business_iban": iban,
+                "business_note": note,
+            })
+            st.success("Betriebsdaten gespeichert.")
 
 
 # ---------------- Benutzer ----------------
@@ -350,8 +424,7 @@ def _render_user_admin():
     else:
         for uid, uname, role, email, first, last in users:
             role_tag = _role_badge(role)
-            with st.expander(f"{uname}  ", expanded=False):
-                # Rolle als Badge in der Kopfzeile anzeigen
+            with st.expander(f"{uname}", expanded=False):
                 st.markdown(role_tag, unsafe_allow_html=True)
 
                 a1, a2 = st.columns(2)
@@ -370,7 +443,6 @@ def _render_user_admin():
                     try:
                         with conn() as cn:
                             c = cn.cursor()
-                            # Username (UNIQUE) und restliche Felder aktualisieren
                             c.execute("""UPDATE users
                                          SET username=?, role=?, first_name=?, last_name=?, email=?
                                          WHERE id=?""",
@@ -412,9 +484,9 @@ def _render_employee_admin():
             else:
                 with conn() as cn:
                     c = cn.cursor()
-                    c.execute("""INSERT INTO users(username, role, email, passhash)
-             VALUES(?,?,?,?)""",
-          (new_user, new_role, new_mail, ""))
+                    c.execute("""INSERT INTO employees(name, contract, hourly, is_barlead)
+                                 VALUES(?,?,?,?)""",
+                              (name, contract, hourly, int(barlead)))
                     cn.commit()
                 st.success(f"Mitarbeiter '{name}' angelegt.")
                 st.rerun()
@@ -481,13 +553,11 @@ def _render_fixcost_admin():
         for fid, name, amount, note, active in costs:
             state_emoji = "🟢" if active else "⚪"
             with st.expander(f"{state_emoji} {name} – {amount:.2f} €", expanded=False):
-                # Badge im Body
                 st.markdown(
                     _pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"),
                     unsafe_allow_html=True
                 )
-                st.write("")  # kleine Lücke
-
+                st.write("")
                 c1, c2 = st.columns([2, 1])
                 e_name = c1.text_input("Bezeichnung", value=name, key=f"fc_name_{fid}")
                 e_amount = c2.number_input("Betrag (€)", value=float(amount or 0.0), step=10.0, key=f"fc_amount_{fid}")
@@ -534,18 +604,16 @@ def _render_db_overview():
 
 
 # ---------------- Backup-Verwaltung ----------------
-
 def _render_backup_admin():
     section_title("💾 Datenbank-Backups")
 
-    # Letztes Backup prominent anzeigen
+    # Letztes Backup prominent
     lb = _last_backup_time()
     last_text = lb.strftime("%d.%m.%Y %H:%M") if lb else "—"
     st.caption(f"Letztes Backup: **{last_text}**")
 
     col_a, col_b = st.columns([1, 1])
 
-    # ➕ Backup erstellen (eindeutiger Key + korrekte Einrückung)
     if col_a.button("🧷 Backup jetzt erstellen", key="bkp_create_admin", use_container_width=True):
         created = _create_backup()
         if created:
@@ -553,7 +621,6 @@ def _render_backup_admin():
         time.sleep(1)
         st.rerun()
 
-    # Liste der Backups
     backups = _list_backups()
     if not backups:
         st.info("Keine Backups gefunden.")
@@ -581,16 +648,16 @@ def render_admin():
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
 
-    # Basis-Hooks
     _ensure_tables()
     _ensure_version_logged()
 
     # Kopf
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    # Tabs
+    # Tabs (🏢 Betrieb direkt nach Übersicht)
     tabs = st.tabs([
         "🏠 Übersicht",
+        "🏢 Betrieb",
         "👤 Benutzer",
         "🧍 Mitarbeiter",
         "💰 Fixkosten",
@@ -601,14 +668,16 @@ def render_admin():
     with tabs[0]:
         _render_home()
     with tabs[1]:
-        _render_user_admin()
+        _render_business_admin()
     with tabs[2]:
-        _render_employee_admin()
+        _render_user_admin()
     with tabs[3]:
-        _render_fixcost_admin()
+        _render_employee_admin()
     with tabs[4]:
-        _render_db_overview()
+        _render_fixcost_admin()
     with tabs[5]:
+        _render_db_overview()
+    with tabs[6]:
         _render_backup_admin()
 
     st.markdown("---")
