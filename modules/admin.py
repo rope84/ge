@@ -412,9 +412,9 @@ def _render_employee_admin():
             else:
                 with conn() as cn:
                     c = cn.cursor()
-                    c.execute("""INSERT INTO employees(name, contract, hourly, is_barlead)
-                                 VALUES(?,?,?,?)""",
-                              (name, contract, hourly, int(barlead)))
+                    c.execute("""INSERT INTO users(username, role, email, passhash)
+             VALUES(?,?,?,?)""",
+          (new_user, new_role, new_mail, ""))
                     cn.commit()
                 st.success(f"Mitarbeiter '{name}' angelegt.")
                 st.rerun()
@@ -534,6 +534,7 @@ def _render_db_overview():
 
 
 # ---------------- Backup-Verwaltung ----------------
+
 def _render_backup_admin():
     section_title("💾 Datenbank-Backups")
 
@@ -544,13 +545,15 @@ def _render_backup_admin():
 
     col_a, col_b = st.columns([1, 1])
 
+    # ➕ Backup erstellen (eindeutiger Key + korrekte Einrückung)
     if col_a.button("🧷 Backup jetzt erstellen", key="bkp_create_admin", use_container_width=True):
-    created = _create_backup()
-    if created:
-        st.success(f"Backup erstellt: {created.name}")
-    time.sleep(1)
-    st.rerun()
+        created = _create_backup()
+        if created:
+            st.success(f"Backup erstellt: {created.name}")
+        time.sleep(1)
+        st.rerun()
 
+    # Liste der Backups
     backups = _list_backups()
     if not backups:
         st.info("Keine Backups gefunden.")
@@ -564,11 +567,11 @@ def _render_backup_admin():
     st.write(f"💾 Größe: {_format_size(chosen.stat().st_size)}")
 
     ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.", key="bkp_restore_confirm")
-if col_b.button("🔄 Backup wiederherstellen", key="bkp_restore_action", disabled=not ok, use_container_width=True):
-    with st.spinner("Backup wird wiederhergestellt..."):
-        _restore_backup(chosen)
-        time.sleep(1.0)
-    st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
+    if col_b.button("🔄 Backup wiederherstellen", key="bkp_restore_action", disabled=not ok, use_container_width=True):
+        with st.spinner("Backup wird wiederhergestellt..."):
+            _restore_backup(chosen)
+            time.sleep(1.0)
+        st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
 
 # ---------------- Haupt-Render ----------------
