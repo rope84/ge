@@ -100,8 +100,8 @@ def fixed_footer():
         </style>
 
         <div class="footer">
-            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
-            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            👤 {st.session_state.get('username', 'Gast')}</a><br>
+            Rechte: <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
         """,
