@@ -33,6 +33,7 @@ def import_modules():
         try_import(f"modules.{mod_name}")  # <- angepasst für neue Ordnerstruktur
 
     return modules, errors
+    modules, import_errors = import_modules()
 
 # ---------------- Session Init ----------------
 def init_session():
