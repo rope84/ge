@@ -3,3 +3,4 @@ pandas
 plotly
 reportlab
 openpyxl
+streamlit-javascript
