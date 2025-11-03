@@ -10,6 +10,8 @@ from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.config import APP_NAME, APP_VERSION
+from modules import import_items
+import_items.render_import_items()
 
 
 # ---------------- Änderungsnotizen (Default) ----------------
