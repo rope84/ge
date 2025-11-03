@@ -71,20 +71,20 @@ def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
     import streamlit as st
 
-    # CSS + HTML + Klickverhalten via Streamlit-Link
     st.markdown(
         f"""
         <style>
         .footer {{
             position: fixed;
             bottom: 10px;
-            left: 0;
-            width: 100%;
-            text-align: center;
+            left: 12px;  /* leicht eingerückt, damit es nicht direkt am Rand klebt */
+            width: 240px; /* Sidebar-Breite anpassen, ggf. 250–280px je nach Layout */
+            text-align: left;
             font-size: 12px;
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
+            white-space: nowrap;
         }}
         .footer a {{
             color: #bbb;
@@ -98,8 +98,7 @@ def fixed_footer():
         </style>
 
         <div class="footer">
-            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a>
-            &nbsp;·&nbsp;
+            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
             🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
