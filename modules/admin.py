@@ -4,6 +4,7 @@ import pandas as pd
 import shutil
 import time
 import datetime
+import plotly.express as px
 from pathlib import Path
 from typing import Optional, List
 
@@ -164,41 +165,92 @@ def _count_rows(table: str) -> int:
 
 # ------------------- Admin-Startseite -------------------
 def _render_home():
-    page_header("Admin-Cockpit", "System- und Datenübersicht")
+    # KEIN page_header hier – der kommt in render_admin() genau einmal!
     section_title("Willkommen")
     st.markdown(
         "Willkommen im **Gastro Essentials Admin-Cockpit**. "
         "Hier verwaltest du Benutzer, Mitarbeiter, Fixkosten, Datenbanken und Backups."
     )
 
+    # ---------- Systemstatus (KPI + Mini-Charts) ----------
     section_title("Systemstatus")
-    a1, a2, a3 = st.columns(3)
-    b1, b2, b3 = st.columns(3)
-    with a1:
+
+    # Live-Kennzahlen
+    users_cnt = _count_rows("users")
+    emp_cnt   = _count_rows("employees")
+    fix_cnt   = _count_rows("fixcosts")
+    bkp_cnt   = len(_list_backups())
+    today_str = datetime.date.today().strftime("%d.%m.%Y")
+
+    # KPI-Reihe
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
         metric_card("Version", APP_VERSION, "Aktiver Build")
-    with a2:
-        metric_card("Benutzer", str(_count_rows("users")), "Registrierte Accounts")
-    with a3:
-        metric_card("Mitarbeiter", str(_count_rows("employees")), "Erfasste Mitarbeiter")
-    with b1:
-        metric_card("Fixkosten", str(_count_rows("fixcosts")), "Monatliche Posten")
-    with b2:
-        metric_card("Backups", str(len(_list_backups())), "Gefundene .bak-Dateien")
-    with b3:
-        metric_card("Letztes Update", datetime.date.today().strftime("%d.%m.%Y"), "Automatisch erkannt")
+    with c2:
+        metric_card("Benutzer", f"{users_cnt}", "Registrierte Accounts")
+    with c3:
+        metric_card("Mitarbeiter", f"{emp_cnt}", "Erfasste Mitarbeiter")
+    with c4:
+        metric_card("Backups", f"{bkp_cnt}", "Gefundene .bak-Dateien")
+
+    # Kleine interaktive Charts (auf Basis der vorhandenen Zähler)
+    left, right = st.columns(2)
+
+    with left:
+        # Anteil/Verteilung: Users/Mitarbeiter/Fixkosten (als Donut)
+        df_kpi = pd.DataFrame({
+            "Kategorie": ["Benutzer", "Mitarbeiter", "Fixkosten"],
+            "Anzahl":    [users_cnt, emp_cnt, fix_cnt]
+        })
+        fig = px.pie(df_kpi, names="Kategorie", values="Anzahl", hole=0.5,
+                     title="Verteilung Kernobjekte")
+        st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+    with right:
+        # Backups: Größen/Anzahl (Top 10)
+        bfiles = _list_backups()[:10]
+        if bfiles:
+            data = []
+            for f in bfiles:
+                data.append({
+                    "Backup": f.name[-16:],  # nur Timestamp zeigen
+                    "Größe (MB)": round(f.stat().st_size / (1024*1024), 2)
+                })
+            df_b = pd.DataFrame(data)
+            fig2 = px.bar(df_b, x="Backup", y="Größe (MB)", title="Backups (zuletzt, Größe)",
+                          labels={"Backup": "Zeitstempel"})
+            st.plotly_chart(fig2, use_container_width=True, theme="streamlit")
+        else:
+            st.info("Noch keine Backups vorhanden.")
 
     st.markdown("---")
+    
+    # ---------- Changelog kompakt ----------
     section_title("📝 Änderungsprotokoll (Changelog)")
+    r1, r2 = st.columns([1, 3])
+    with r1:
+        refresh = st.button("🔄 Aktualisieren", use_container_width=True)
+    with r2:
+        st.caption(f"Letzte Änderung erfasst am: **{today_str}**")
+
     with conn() as cn:
         df = pd.read_sql(
-            "SELECT created_at, version, note FROM changelog ORDER BY datetime(created_at) DESC LIMIT 20",
+            "SELECT created_at, version, note FROM changelog "
+            "ORDER BY datetime(created_at) DESC LIMIT 25",
             cn
         )
+
     if df.empty:
         st.info("Noch keine Changelog-Einträge vorhanden.")
     else:
+        # kleinere, dezente Darstellung
         for _, r in df.iterrows():
-            st.markdown(f"- **{r['version']}** · {r['created_at'][:16]} — {r['note']}")
+            st.markdown(
+                f"<div style='font-size:12px; opacity:0.9;'>"
+                f"<b>{r['version']}</b> · {r['created_at'][:16]} — {r['note']}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
     st.caption(f"Datenbankpfad: `{DB_PATH}`")
 
@@ -211,8 +263,10 @@ def render_admin():
     _ensure_tables()
     _ensure_version_logged()
 
+    # EIN Header – oben
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
+    # Danach Tabs
     tabs = st.tabs([
         "🏠 Übersicht",
         "👤 Benutzer",
@@ -222,11 +276,11 @@ def render_admin():
         "💾 Backups"
     ])
 
-    # TAB 1 – Übersicht
+    # Tab 1 – Übersicht (enthält Willkommen, Status, Changelog)
     with tabs[0]:
         _render_home()
 
-    # TAB 2–4 ausgelassen (Benutzer, Mitarbeiter, Fixkosten – identisch zu vorher)
+    # Tabs 2–4 (Benutzer/Mitarbeiter/Fixkosten): dein bestehender Code bleibt
 
     # ------------------- TAB 5: DATENBANK -------------------
     with tabs[4]:
@@ -270,7 +324,7 @@ def render_admin():
                             use_container_width=True,
                         )
                     else:
-                        # 💾 Backup-Übersicht im DB-Tab
+                        # Backup-Übersicht im DB-Tab
                         section_title("💾 Gespeicherte Backups")
                         backups = _list_backups()
                         if not backups:
@@ -292,7 +346,7 @@ def render_admin():
                                         use_container_width=True,
                                     )
 
-    # TAB 6 – Backups (unverändert)
+    # ------------------- TAB 6: BACKUPS -------------------
     with tabs[5]:
         section_title("💾 Datenbank-Backups")
         col_a, col_b = st.columns([1, 1])
