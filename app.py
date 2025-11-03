@@ -4,6 +4,7 @@ import traceback
 
 from core.db import setup_db
 from core.auth import seed_admin_if_empty
+from core import auth
 from core.ui_theme import use_theme, page_header, small_footer
 from login import render_login_form
 
