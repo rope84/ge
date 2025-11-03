@@ -4,6 +4,7 @@ import hashlib
 import streamlit as st
 from core.db import conn
 from datetime import datetime
+from core.config import APP_NAME, APP_VERSION
 
 # sehr simple Policy: min 6, 1 Großbuchstabe, 1 Sonderzeichen
 PWD_PATTERN = re.compile(r"^(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}$")
