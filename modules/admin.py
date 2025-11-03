@@ -667,8 +667,6 @@ def _render_db_overview():
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
         
-    from modules import import_items
-    import_items.render_import_items()
 
 # ---------------- Backup-Verwaltung ----------------
 def _render_backup_admin():
