@@ -73,10 +73,11 @@ def login_screen():
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
 
+    # Inline-CSS für Positionierung und Stil
     st.markdown(
-        """
+        f"""
         <style>
-        .footer {
+        .footer {{
             position: fixed;
             bottom: 10px;
             left: 12px;
@@ -86,47 +87,26 @@ def fixed_footer():
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
-        }
-        .link-btn > button {
-            background: none !important;
-            border: none;
+        }}
+        .footer a {{
             color: #bbb;
-            font-weight: bold;
             text-decoration: none;
-            cursor: pointer;
-            padding: 0;
-            margin: 0;
-            font-size: 12px;
-        }
-        .link-btn > button:hover {
+            font-weight: bold;
+        }}
+        .footer a:hover {{
             color: white;
             text-decoration: underline;
-        }
+        }}
         </style>
+
+        <div class="footer">
+            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
+            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+        </div>
         """,
         unsafe_allow_html=True,
     )
-
-    username = st.session_state.get("username", "Gast")
-
-    # Unsichtbarer Container mit Button
-    footer_col = st.container()
-    with footer_col:
-        st.markdown('<div class="footer">', unsafe_allow_html=True)
-
-        clicked = st.button(f"👤 {username}", key="footer_user", help="Profil anzeigen", use_container_width=False)
-        if clicked:
-            st.session_state["nav_choice"] = "Profil"
-            st.rerun()
-
-        st.markdown(
-            f"""
-            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
-            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
    
 # ---------------- Sidebar ----------------
 def sidebar():
