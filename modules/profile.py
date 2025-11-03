@@ -4,6 +4,7 @@ import streamlit as st
 from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.db import conn
+from core.config import APP_NAME, APP_VERSION
 
 
 # -------------------------------
@@ -108,4 +109,4 @@ def render_profile(username: str):
                     st.error(msg)
 
     st.markdown("---")
-    st.caption("© 2025 Roman Petek – Gastro Essentials")
+    st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
