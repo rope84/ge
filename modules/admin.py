@@ -707,6 +707,7 @@ def _render_backup_admin():
 
 # ---------------- Haupt-Render ----------------
 def render_admin():
+    """Entry-Point fürs Admin-Cockpit (von app.py aufgerufen)."""
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
@@ -723,8 +724,7 @@ def render_admin():
         "🧍 Mitarbeiter",
         "💰 Fixkosten",
         "🗂️ Datenbank",
-        "📦 Artikelimport",
-        "💾 Backups"
+        "💾 Backups",
     ])
 
     with tabs[0]:
@@ -739,10 +739,13 @@ def render_admin():
         _render_fixcost_admin()
     with tabs[5]:
         _render_db_overview()
+        # Optional: Import-UI hier anhängen
+        try:
+            from modules import import_items
+            import_items.render_import_items()
+        except Exception as e:
+            st.caption(f"Import-Tool nicht verfügbar: {e}")
     with tabs[6]:
-        from modules import import_items
-        import_items.render_import_items()
-    with tabs[7]:
         _render_backup_admin()
     
     st.markdown("---")
