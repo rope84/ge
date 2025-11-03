@@ -182,6 +182,9 @@ def _render_home():
 
 # ------------------- Haupt-Render -------------------
 def render_admin():
+    if st.session_state.get("role") != "admin":
+        st.error("Kein Zugriff. Adminrechte erforderlich.")
+        return
     _ensure_tables()
     _ensure_version_logged()  # <-- sorgt für automatische Changelog-Einträge bei Versionswechsel
 
@@ -208,7 +211,7 @@ def render_admin():
         section_title("👤 Benutzerverwaltung")
         # Passwort-Funktion optional aus auth
         try:
-            from auth import change_password
+            from core.auth import change_password
         except Exception:
             change_password = None
 
