@@ -723,6 +723,7 @@ def render_admin():
         "🧍 Mitarbeiter",
         "💰 Fixkosten",
         "🗂️ Datenbank",
+        "📦 Artikelimport",
         "💾 Backups"
     ])
 
@@ -739,7 +740,10 @@ def render_admin():
     with tabs[5]:
         _render_db_overview()
     with tabs[6]:
+        from modules import import_items
+        import_items.render_import_items()
+    with tabs[7]:
         _render_backup_admin()
-
+    
     st.markdown("---")
     st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
