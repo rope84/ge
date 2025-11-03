@@ -1,7 +1,7 @@
 # abrechnung.py
 import streamlit as st
 from datetime import date
-from ui_theme import page_header, section_title, metric_card
+from core.ui_theme import page_header, section_title, metric_card
 
 
 # -----------------------------------------------
