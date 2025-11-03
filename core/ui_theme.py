@@ -1,6 +1,7 @@
 # ui_theme.py
 from pathlib import Path
 import streamlit as st
+from core.config import APP_NAME, APP_VERSION
 
 # =========================
 #  Farb- & Layout-Variablen
