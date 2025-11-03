@@ -5,6 +5,7 @@ import datetime as dt
 import plotly.express as px
 from core.db import conn
 from core.ui_theme import page_header, section_title, metric_card
+from core.config import APP_NAME, APP_VERSION
 
 
 # ----------------------------------------------------------
@@ -178,4 +179,4 @@ def render_dashboard():
     section_title("Letzte Einträge")
     st.dataframe(df.tail(10), use_container_width=True)
 
-    st.caption("© 2025 Roman Petek – Gastro Essentials Beta 1")
+    st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
