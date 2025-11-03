@@ -295,5 +295,3 @@ def render_inventur(role: str, username: str):
                                file_name=os.path.basename(fname),
                                mime="application/pdf",
                                key=f"pdf_{year}_{sel_month}")
-                  
-          st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
