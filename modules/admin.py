@@ -21,7 +21,7 @@ DEFAULT_CHANGELOG_NOTES = {
         "Verbessertes Profil-Modul inkl. Passwort ändern",
         "Inventur mit Monatslogik & PDF-Export",
         "Abrechnung poliert: Garderobe-Logik, Voucher-Einbezug",
-        "Datenbank-Backups inkl. Restore-Funktion"
+        "Datenbank-Backups inkl. Restore-Funktion (manuell)"
     ]
 }
 
@@ -137,22 +137,26 @@ def _count_rows(table: str) -> int:
         return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
-# ---------------- Backups (1×/Tag, BCK_YYYYMMDD.bak) ----------------
-def _list_backups():
+# ---------------- Backups (manuell, BCK_YYYYMMDD_HHMMSS.bak) ----------------
+def _list_backups() -> list[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    # genau unser Schema
     files = sorted(BACKUP_DIR.glob("BCK_*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files
 
 
-def _create_backup() -> Optional[Path]:
-    """Erstellt max. 1 Backup pro Tag, Name: BCK_YYYYMMDD.bak"""
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    today = datetime.date.today().strftime("%Y%m%d")
-    target = BACKUP_DIR / f"BCK_{today}.bak"
-    if target.exists():
-        st.warning(f"⚠️ Heute bereits ein Backup vorhanden: {target.name}")
+def _last_backup_time() -> Optional[datetime.datetime]:
+    files = _list_backups()
+    if not files:
         return None
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    return datetime.datetime.fromtimestamp(latest.stat().st_mtime)
+
+
+def _create_backup() -> Optional[Path]:
+    """Erstellt ein manuelles Backup mit Timestamp."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = BACKUP_DIR / f"BCK_{ts}.bak"
     shutil.copy(DB_PATH, target)
     return target
 
@@ -172,6 +176,20 @@ def _format_size(bytes_: int) -> str:
 
 
 # ---------------- Übersicht / Dashboard ----------------
+def _status_badge(days: Optional[int]) -> tuple[str, str, str]:
+    """
+    Gibt (farbe, label, tooltip) zurück.
+    Regeln: None => rot (kein Backup); <=5 grün; 6-7 gelb; >7 rot.
+    """
+    if days is None:
+        return ("red", "Kein Backup", "Es wurde noch kein Backup gefunden.")
+    if days <= 5:
+        return ("green", "Aktuell", f"Letztes Backup ist {days} Tag(e) alt.")
+    if days <= 7:
+        return ("gold", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
+    return ("red", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
+
+
 def _render_home():
     section_title("Systemstatus")
 
@@ -181,56 +199,55 @@ def _render_home():
     fix_cnt   = _count_rows("fixcosts")
     bkp_files = _list_backups()
     bkp_cnt   = len(bkp_files)
-    today_str = datetime.date.today().strftime("%d.%m.%Y")
 
-    # Ampel-Logik
-    color = "green"
-    details = []
+    # Backup-Status
+    last_bkp_dt = _last_backup_time()
+    days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
+    badge_color, badge_label, badge_tip = _status_badge(days_since)
 
-    if users_cnt == 0 or emp_cnt == 0:
-        color = "yellow"
-        details.append("Keine Benutzer oder Mitarbeiter angelegt.")
-    if bkp_cnt == 0:
-        color = "red"
-        details.append("Kein Backup vorhanden.")
-    else:
-        last_bkp = max(f.stat().st_mtime for f in bkp_files)
-        days_old = (datetime.date.today() - datetime.date.fromtimestamp(last_bkp)).days
-        if days_old > 1:
-            if color != "red":
-                color = "yellow"
-            details.append(f"Letztes Backup ist {days_old} Tage alt.")
+    # Gesamtstatus (inkl. Benutzer/Mitarbeiter)
+    issues = []
+    if users_cnt == 0:
+        issues.append("Keine Benutzer angelegt.")
+    if emp_cnt == 0:
+        issues.append("Keine Mitarbeiter angelegt.")
+    if badge_color in ("gold", "red"):
+        issues.append(badge_tip)
 
-    status_text = {
-        "green": "🟢 Systemstatus: Alles in Ordnung.",
-        "yellow": "🟡 Systemstatus: Es gibt Hinweise.",
-        "red": "🔴 Systemstatus: Handlungsbedarf!"
-    }[color]
+    # Einzeilige Anzeige: links kompakter Status, rechts inline-Details
+    left, right = st.columns([5, 3])
 
-    # Eine Zeile: links Statusbox (klein), rechts Details (Expander)
-    left, right = st.columns([5, 2])
     with left:
+        # kleines Badge + Text + Tooltip-Icon (hover)
+        last_bkp_text = "—"
+        if last_bkp_dt:
+            last_bkp_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
+        today_str = datetime.date.today().strftime("%d.%m.%Y")
+
         st.markdown(
             f"""
-            <div style='border-left:6px solid {color};
-                        background-color:rgba(255,255,255,0.03);
-                        padding:8px 12px;
-                        border-radius:10px;
-                        font-size:13px;'>
-                <b>{status_text}</b><br>
-                <span style='font-size:12px;opacity:0.8;'>Letzte Prüfung: {today_str}</span>
+            <div style='display:flex; align-items:center; gap:10px;
+                        background:rgba(255,255,255,0.03); padding:8px 12px;
+                        border-radius:10px;'>
+              <span style='display:inline-block; width:10px; height:10px;
+                           border-radius:50%; background:{badge_color};'></span>
+              <div style='font-size:13px;'>
+                <b>Status: {badge_label}</b>
+                <span title="{badge_tip}" style="opacity:0.7; cursor:help;">ⓘ</span><br>
+                <span style='font-size:12px; opacity:0.85;'>
+                  Letztes Backup: <b>{last_bkp_text}</b> · Prüfung: {today_str}
+                </span>
+              </div>
             </div>
             """,
             unsafe_allow_html=True
         )
+
     with right:
-        if color in ("yellow", "red"):
-            with st.expander("🔍 Details anzeigen", expanded=False):
-                if details:
-                    for d in details:
-                        st.markdown(f"- {d}")
-                else:
-                    st.write("Keine Details verfügbar.")
+        if issues:
+            with st.expander("🔍 Details", expanded=False):
+                for d in issues:
+                    st.markdown(f"- {d}")
         else:
             st.caption("🟢 Keine Hinweise")
 
@@ -243,23 +260,29 @@ def _render_home():
 
     st.divider()
 
-    # Charts
+    # Charts (nur Backup-Trend)
+    files = bkp_files[:12]
     left, right = st.columns(2)
     with left:
-        df = pd.DataFrame({
-            "Kategorie": ["Benutzer", "Mitarbeiter", "Fixkosten"],
-            "Anzahl": [users_cnt, emp_cnt, fix_cnt]
-        })
-        fig = px.pie(df, names="Kategorie", values="Anzahl", hole=0.5, title="Verteilung Kernobjekte")
-        st.plotly_chart(fig, use_container_width=True)
-    with right:
-        files = bkp_files[:10]
         if files:
-            data = [{"Backup": f.name.replace(".bak", ""), "Größe (MB)": round(f.stat().st_size / (1024*1024), 2)} for f in files]
-            fig2 = px.bar(pd.DataFrame(data), x="Backup", y="Größe (MB)", title="Letzte Backups")
+            data = [{
+                "Backup": f.name.replace(".bak", ""),
+                "Größe (MB)": round(f.stat().st_size / (1024*1024), 2),
+                "Datum": datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%d.%m.%Y %H:%M")
+            } for f in files]
+            df_b = pd.DataFrame(data)
+            fig2 = px.bar(df_b, x="Backup", y="Größe (MB)", title="Letzte Backups (Größe)")
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("Noch keine Backups vorhanden.")
+    with right:
+        # kleine Tabelle der letzten Backups
+        if files:
+            st.dataframe(
+                pd.DataFrame([{"Backup": f.name, "Datum": datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%d.%m.%Y %H:%M"),
+                               "Größe": _format_size(f.stat().st_size)} for f in files]),
+                use_container_width=True, height=320, hide_index=True
+            )
 
     st.markdown("---")
 
@@ -297,16 +320,19 @@ def _render_user_admin():
         new_mail = c4.text_input("E-Mail")
         if st.form_submit_button("➕ Benutzer anlegen"):
             if new_user and new_pw:
-                with conn() as cn:
-                    c = cn.cursor()
-                    c.execute("""INSERT INTO users(username, role, email, passhash)
-                                 VALUES(?,?,?, '')""",
-                              (new_user, new_role, new_mail))
-                    cn.commit()
-                if change_password:
-                    change_password(new_user, new_pw)
-                st.success(f"Benutzer '{new_user}' angelegt.")
-                st.rerun()
+                try:
+                    with conn() as cn:
+                        c = cn.cursor()
+                        c.execute("""INSERT INTO users(username, role, email, passhash)
+                                     VALUES(?,?,?, '')""",
+                                  (new_user, new_role, new_mail))
+                        cn.commit()
+                    if change_password:
+                        change_password(new_user, new_pw)
+                    st.success(f"Benutzer '{new_user}' angelegt.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Anlegen: {e}")
             else:
                 st.warning("Benutzername und Passwort erforderlich.")
 
@@ -317,23 +343,32 @@ def _render_user_admin():
         for uid, uname, role, email, first, last in users:
             with st.expander(f"{uname} ({role})", expanded=False):
                 a1, a2 = st.columns(2)
-                e_first = a1.text_input("Vorname", first or "", key=f"u_first_{uid}")
-                e_last  = a2.text_input("Nachname", last or "", key=f"u_last_{uid}")
-                e_email = st.text_input("E-Mail", email or "", key=f"u_mail_{uid}")
-                e_role  = st.selectbox("Rolle", ["admin", "barlead", "user", "inventur"],
+                e_username = a1.text_input("Benutzername (Login/Anzeige)", uname, key=f"u_username_{uid}")
+                e_role  = a2.selectbox("Rolle", ["admin", "barlead", "user", "inventur"],
                                        index=["admin","barlead","user","inventur"].index(role),
                                        key=f"u_role_{uid}")
+                e_first = st.text_input("Vorname", first or "", key=f"u_first_{uid}")
+                e_last  = st.text_input("Nachname", last or "", key=f"u_last_{uid}")
+                e_email = st.text_input("E-Mail", email or "", key=f"u_mail_{uid}")
                 new_pw  = st.text_input("Neues Passwort (optional)", type="password", key=f"u_pw_{uid}")
+
                 s1, s2 = st.columns(2)
                 if s1.button("💾 Speichern", key=f"u_save_{uid}"):
-                    with conn() as cn:
-                        c = cn.cursor()
-                        c.execute("""UPDATE users SET first_name=?, last_name=?, email=?, role=? WHERE id=?""",
-                                  (e_first, e_last, e_email, e_role, uid))
-                        cn.commit()
-                    if new_pw:
-                        change_password(uname, new_pw)
-                    st.success("Gespeichert.")
+                    try:
+                        with conn() as cn:
+                            c = cn.cursor()
+                            # Username darf UNIQUE sein -> daher separat updaten
+                            c.execute("""UPDATE users
+                                         SET username=?, role=?, first_name=?, last_name=?, email=?
+                                         WHERE id=?""",
+                                      (e_username, e_role, e_first, e_last, e_email, uid))
+                            cn.commit()
+                        if new_pw:
+                            change_password(e_username, new_pw)
+                        st.success("Gespeichert.")
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
+
                 if s2.button("🗑️ Löschen", key=f"u_del_{uid}"):
                     with conn() as cn:
                         c = cn.cursor()
@@ -479,6 +514,14 @@ def _render_db_overview():
 # ---------------- Backup-Verwaltung ----------------
 def _render_backup_admin():
     section_title("💾 Datenbank-Backups")
+
+    # Letztes Backup prominent anzeigen
+    lb = _last_backup_time()
+    if lb:
+        st.caption(f"Letztes Backup: **{lb.strftime('%d.%m.%Y %H:%M')}**")
+    else:
+        st.caption("Letztes Backup: **—**")
+
     col_a, col_b = st.columns([1, 1])
 
     if col_a.button("🧷 Backup jetzt erstellen", use_container_width=True):
