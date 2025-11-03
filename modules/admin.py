@@ -10,8 +10,6 @@ from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.config import APP_NAME, APP_VERSION
-from modules import import_items
-import_items.render_import_items()
 
 
 # ---------------- Änderungsnotizen (Default) ----------------
@@ -668,7 +666,9 @@ def _render_db_overview():
 
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
-
+        
+    from modules import import_items
+    import_items.render_import_items()
 
 # ---------------- Backup-Verwaltung ----------------
 def _render_backup_admin():
