@@ -1,384 +1,411 @@
 # modules/import_items.py
-import streamlit as st
-import pandas as pd
-import datetime
 import re
-from typing import List, Optional, Tuple
+import datetime
+import pandas as pd
+import streamlit as st
+from pathlib import Path
+from typing import Optional, List, Dict, Tuple
+
 from core.db import conn
 
-# ---------------------------------------------
-# Helpers: Tabellen sicherstellen / Spalten nachrüsten
-# ---------------------------------------------
+# ----------------------------
+# DB Schema (nur falls nicht vorhanden)
+# ----------------------------
 def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
-        # Inventur-Artikel
+
+        # Artikel-Stammdaten (eigenständig, kollidiert nicht mit deinen bisherigen Tabellen)
         c.execute("""
-            CREATE TABLE IF NOT EXISTS inventur_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                unit_amount REAL,
-                unit TEXT,
-                stock_qty REAL NOT NULL DEFAULT 0,
-                purchase_price REAL NOT NULL DEFAULT 0,
-                "group" TEXT,
-                last_updated TEXT
-            )
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            unit_amount REAL,
+            unit TEXT,
+            net_price REAL NOT NULL DEFAULT 0,
+            stock_qty REAL NOT NULL DEFAULT 0,
+            total_value REAL NOT NULL DEFAULT 0,
+            category TEXT,
+            pack TEXT,
+            sku TEXT,
+            created_at TEXT NOT NULL
+        )
         """)
-        # Artikelgruppen
+
+        # Eindeutigkeit: (name, unit_amount, unit)
         c.execute("""
-            CREATE TABLE IF NOT EXISTS item_groups (
-                name TEXT PRIMARY KEY
-            )
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_items_unique
+        ON items(name, unit_amount, unit)
         """)
-        # Standard-Gruppen – nur einmalig
-        defaults = ["alkoholfrei", "bier", "wein", "schaumwein"]
-        for g in defaults:
-            try:
-                c.execute("INSERT INTO item_groups(name) VALUES (?)", (g,))
-            except Exception:
-                pass
+
+        # Kategorie-Liste (optional, frei editierbar)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS item_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            color TEXT
+        )
+        """)
         cn.commit()
 
-def _get_groups() -> List[str]:
-    with conn() as cn:
-        c = cn.cursor()
-        rows = c.execute("SELECT name FROM item_groups ORDER BY name").fetchall()
-        return [r[0] for r in rows]
 
-def _add_group(name: str) -> bool:
-    if not name:
-        return False
-    with conn() as cn:
-        try:
-            cn.execute("INSERT INTO item_groups(name) VALUES (?)", (name.strip(),))
-            cn.commit()
-            return True
-        except Exception:
-            return False
+# ----------------------------
+# Utils
+# ----------------------------
+_DECIMAL_COMMA = re.compile(r"(\d+),(\d+)")
+_SIZE_RE = re.compile(r"(?P<amount>\d+[.,]?\d*)\s*(?P<unit>cl|l|ml|g|kg|stk|stk\.?)$", re.IGNORECASE)
 
-def _delete_group(name: str) -> bool:
-    if not name:
-        return False
-    with conn() as cn:
-        try:
-            cn.execute("DELETE FROM item_groups WHERE name=?", (name,))
-            cn.commit()
-            return True
-        except Exception:
-            return False
-
-# ---------------------------------------------
-# Parser für „Coca Cola 0,2 l“ → (Name, 0.2, 'l')
-# ---------------------------------------------
-_UNIT_RE = re.compile(r"\s*(\d+(?:[.,]\d+)?)\s*(ml|cl|l)\s*$", re.IGNORECASE)
-
-def _parse_article_name(raw: str) -> Tuple[str, Optional[float], Optional[str]]:
-    if not raw:
-        return ("", None, None)
-    s = str(raw).strip()
-    m = _UNIT_RE.search(s)
-    if not m:
-        return (s, None, None)
-    amount_str = m.group(1).replace(",", ".")
-    unit = m.group(2).lower()
-    try:
-        amount = float(amount_str)
-    except Exception:
-        amount = None
-    name = _UNIT_RE.sub("", s).strip()
-    return (name, amount, unit)
-
-def _to_float(x) -> float:
-    if x is None:
-        return 0.0
-    if isinstance(x, (int, float)):
-        return float(x)
-    s = str(x).strip().replace(",", ".")
+def _to_float(val) -> Optional[float]:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().replace(" ", "")
+    s = _DECIMAL_COMMA.sub(r"\1.\2", s)  # 0,2 -> 0.2
+    s = s.replace(",", ".")
     try:
         return float(s)
     except Exception:
-        return 0.0
-
-def _guess_group(name: str) -> Optional[str]:
-    if not name:
         return None
-    n = name.lower()
-    if "schaum" in n or "prosecco" in n or "sekt" in n or "champ" in n:
-        return "schaumwein"
-    if "wein" in n or "merlot" in n or "riesling" in n:
-        return "wein"
-    if "bier" in n or "radler" in n or "ipa" in n or "stout" in n:
-        return "bier"
-    if any(k in n for k in ["wasser", "cola", "sprite", "almdudler", "saft", "juice", "ice tea", "eistee", "tonic", "soda"]):
-        return "alkoholfrei"
+
+def _parse_size(text: str) -> Tuple[Optional[float], Optional[str]]:
+    if not text:
+        return None, None
+    m = _SIZE_RE.search(text.strip())
+    if not m:
+        return None, None
+    amt = _to_float(m.group("amount"))
+    unit = m.group("unit").lower().replace("stk.", "stk")
+    return amt, unit
+
+def _guess_category(name: str) -> Optional[str]:
+    n = (name or "").strip().lower()
+    if not n:
+        return None
+    if any(k in n for k in ["wasser", "cola", "sprite", "fanta", "eistee", "saft", "juice", "tonic", "red bull", "schorle", "limo", "limonade", "alkoholfrei"]):
+        return "Alkoholfrei"
+    if any(k in n for k in ["bier", "radler", "ipa", "stout", "pils", "lager", "weizen"]):
+        return "Bier"
+    if any(k in n for k in ["prosecco", "sekt", "cava", "champagner", "schaumwein", "frizzante"]):
+        return "Schaumwein"
+    if any(k in n for k in ["riesling", "veltliner", "zweigelt", "merlot", "sauvignon", "wein", "blaufränkisch", "chardonnay"]):
+        return "Wein"
+    if any(k in n for k in ["gin", "vodka", "rum", "tequila", "whisky", "whiskey", "bourbon", "cognac", "brandy"]):
+        return "Spirituose"
     return None
 
-# ---------------------------------------------
-# DB-Zugriffe Inventur-Artikel
-# ---------------------------------------------
-def _fetch_items_df() -> pd.DataFrame:
+def _load_categories() -> List[Dict]:
     with conn() as cn:
-        return pd.read_sql(
-            'SELECT id, name, unit_amount, unit, stock_qty, purchase_price, "group", last_updated FROM inventur_items ORDER BY name',
-            cn
-        )
+        df = pd.read_sql("SELECT id, name, color FROM item_categories ORDER BY name", cn)
+    return df.to_dict(orient="records")
 
-def _upsert_item(row: dict):
-    """Upsert nach (name, unit_amount, unit)."""
-    now = datetime.datetime.now().isoformat(timespec="seconds")
-    with conn() as cn:
-        c = cn.cursor()
-        ex = c.execute("""
-            SELECT id FROM inventur_items
-            WHERE name=? AND (unit_amount IS ? OR unit_amount=?) AND (unit IS ? OR unit=?)
-        """, (row["name"], row["unit_amount"], row["unit_amount"], row["unit"], row["unit"])).fetchone()
-        if ex:
-            c.execute("""
-                UPDATE inventur_items
-                   SET stock_qty=?, purchase_price=?, "group"=?, last_updated=?
-                 WHERE id=?
-            """, (row["stock_qty"], row["purchase_price"], row.get("group"), now, ex[0]))
-        else:
-            c.execute("""
-                INSERT INTO inventur_items (name, unit_amount, unit, stock_qty, purchase_price, "group", last_updated)
-                VALUES (?,?,?,?,?,?,?)
-            """, (row["name"], row["unit_amount"], row["unit"], row["stock_qty"], row["purchase_price"], row.get("group"), now))
-        cn.commit()
-
-def _update_item_by_id(itm: dict):
-    now = datetime.datetime.now().isoformat(timespec="seconds")
-    with conn() as cn:
-        cn.execute("""
-            UPDATE inventur_items
-               SET name=?, unit_amount=?, unit=?, stock_qty=?, purchase_price=?, "group"=?, last_updated=?
-             WHERE id=?
-        """, (itm["name"], itm["unit_amount"], itm["unit"], itm["stock_qty"], itm["purchase_price"], itm.get("group"), now, itm["id"]))
-        cn.commit()
-
-def _delete_items_by_ids(ids: List[int]):
-    if not ids:
+def _ensure_category(name: str, color: Optional[str] = None):
+    if not name:
         return
     with conn() as cn:
-        q = "DELETE FROM inventur_items WHERE id IN (%s)" % ",".join(["?"]*len(ids))
-        cn.execute(q, ids)
+        c = cn.cursor()
+        try:
+            c.execute("INSERT OR IGNORE INTO item_categories(name, color) VALUES(?,?)", (name, color or None))
+            cn.commit()
+        except Exception:
+            pass
+
+def _upsert_item(row: Dict):
+    """
+    row: dict with keys: name, unit_amount, unit, net_price, stock_qty, total_value, category, pack, sku
+    UPSERT via unique index (name, unit_amount, unit)
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        # existiert?
+        cur = c.execute(
+            "SELECT id FROM items WHERE name=? AND (unit_amount IS ? OR unit_amount=?) AND (unit IS ? OR unit=?)",
+            (row.get("name"),
+             row.get("unit_amount"), row.get("unit_amount"),
+             row.get("unit"), row.get("unit"))
+        ).fetchone()
+        total_value = float(row.get("stock_qty") or 0) * float(row.get("net_price") or 0)
+        if cur:
+            c.execute("""
+                UPDATE items
+                   SET net_price=?,
+                       stock_qty=?,
+                       total_value=?,
+                       category=?,
+                       pack=?,
+                       sku=? 
+                 WHERE id=?
+            """, (row.get("net_price") or 0,
+                  row.get("stock_qty") or 0,
+                  total_value,
+                  row.get("category"),
+                  row.get("pack"),
+                  row.get("sku"),
+                  cur[0]))
+        else:
+            c.execute("""
+                INSERT INTO items(name, unit_amount, unit, net_price, stock_qty, total_value, category, pack, sku, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+            """, (row.get("name"),
+                  row.get("unit_amount"),
+                  row.get("unit"),
+                  row.get("net_price") or 0,
+                  row.get("stock_qty") or 0,
+                  total_value,
+                  row.get("category"),
+                  row.get("pack"),
+                  row.get("sku"),
+                  now))
         cn.commit()
 
-# ---------------------------------------------
-# UI
-# ---------------------------------------------
-def _divider():
-    st.markdown("<hr style='opacity:0.1;'>", unsafe_allow_html=True)
 
+# ----------------------------
+# MAPPING UI & PARSER
+# ----------------------------
+EXPECTED = {
+    "name": "Artikelname",
+    "size": "Menge/Einheit (z.B. 0,2l oder 2cl) – optional",
+    "stock_qty": "Bestand / letzter Inventurstand (Stk)",
+    "net_price": "Netto-Einkaufspreis pro Einheit (€)",
+    # optional:
+    "pack": "Gebinde/Packung (optional)",
+    "sku": "SKU/Artikelnummer (optional)"
+}
+
+def _clean_uploaded_df(df: pd.DataFrame) -> pd.DataFrame:
+    # Spaltennamen säubern
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    # leere Zeilen entfernen
+    df = df.dropna(how="all")
+    # Strings trimmen
+    for col in df.select_dtypes(include=["object"]).columns:
+        df[col] = df[col].astype(str).str.strip()
+    return df
+
+def _apply_mapping(raw_df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.DataFrame:
+    """
+    mapping keys in EXPECTED; values = Spaltenname aus raw_df (oder None)
+    """
+    out = pd.DataFrame()
+    # Name (Pflicht)
+    out["name"] = raw_df[mapping["name"]].astype(str).str.strip()
+
+    # Größe: versuche aus zugeordneter Spalte zu lesen, sonst versuche direkt aus name zu parsen
+    amt = []
+    unt = []
+    if mapping.get("size") and mapping["size"] in raw_df.columns:
+        for s in raw_df[mapping["size"]].astype(str).fillna(""):
+            a, u = _parse_size(s)
+            amt.append(a)
+            unt.append(u)
+    else:
+        # versuche am Ende des Namens zu erkennen (zB "Tonic 0,2l")
+        for n in out["name"]:
+            a, u = _parse_size(n)
+            amt.append(a)
+            unt.append(u)
+    out["unit_amount"] = amt
+    out["unit"] = [u.lower() if u else None for u in unt]
+
+    # Bestand / Preis (Pflichtfelder dürfen 0 sein)
+    out["stock_qty"] = raw_df[mapping["stock_qty"]].apply(_to_float) if mapping.get("stock_qty") else 0.0
+    out["net_price"]  = raw_df[mapping["net_price"]].apply(_to_float)  if mapping.get("net_price")  else 0.0
+
+    # Optional
+    out["pack"] = raw_df[mapping["pack"]].astype(str) if mapping.get("pack") and mapping["pack"] in raw_df.columns else ""
+    out["sku"]  = raw_df[mapping["sku"]].astype(str)  if mapping.get("sku")  and mapping["sku"]  in raw_df.columns else ""
+
+    # Total
+    out["total_value"] = out["stock_qty"].fillna(0) * out["net_price"].fillna(0)
+
+    # Kategorie vorschlagen
+    out["category"] = out["name"].apply(_guess_category)
+
+    # Anzeige-Helfer
+    return out
+
+
+# ----------------------------
+# UI
+# ----------------------------
 def render_import_items():
     _ensure_tables()
 
-    st.markdown("## 📦 Artikelimport & Verwaltung")
-    st.caption("Excel/CSV importieren, Artikel prüfen/ändern, Gruppen verwalten.")
+    st.markdown("### 📥 Artikelimport (Excel/CSV)")
+    st.caption("Lade deine Artikelliste hoch, ordne Spalten zu, korrigiere Werte inline & speichere direkt in die Datenbank.")
 
-    # --- Layout: Upload links / Gruppen rechts
-    left, right = st.columns([2, 1], gap="large")
+    tabs = st.tabs(["1) Upload", "2) Prüfen & Bearbeiten", "3) Speichern"])
 
-    with left:
-        st.subheader("1) Datei hochladen")
-        st.write("**Format:** Spalte **A** Name (z. B. „Coca Cola 0,2 l“), **B** Bestand, **C** Netto-EK, **D** (optional, ignoriert).")
-        file = st.file_uploader("Datei auswählen", type=["xlsx", "xls", "csv"])
-        zero_all = st.checkbox("Alle Bestände (Stock) beim Import auf **0** setzen", value=False)
-        st.caption("Tipp: „Bestand = letzter Inventurstand“. Du kannst ihn hier bewusst auf 0 setzen.")
+    # --- Sidebar: Kategorien verwalten ---
+    with st.sidebar:
+        st.markdown("#### 🏷️ Kategorien verwalten")
+        cats = _load_categories()
+        if cats:
+            for c in cats:
+                color = c.get("color") or "#6b7280"
+                st.markdown(
+                    f"<div style='display:inline-block;margin:2px;padding:2px 8px;border-radius:999px;"
+                    f"background:{color}22;color:{color};border:1px solid {color}55;font-size:12px'>{c['name']}</div>",
+                    unsafe_allow_html=True
+                )
+        with st.form("cat_add"):
+            st.write("")
+            new_cat = st.text_input("Neue Kategorie")
+            new_col = st.color_picker("Farbe", value="#3b82f6")
+            if st.form_submit_button("➕ Kategorie anlegen", use_container_width=True):
+                if new_cat.strip():
+                    _ensure_category(new_cat.strip(), new_col)
+                    st.experimental_rerun()
 
-        parsed_df = None
-        groups = _get_groups()
-
-        if file:
-            try:
-                if file.name.lower().endswith(".csv"):
-                    raw_df = pd.read_csv(file)
-                else:
-                    raw_df = pd.read_excel(file)
-            except Exception as e:
-                st.error(f"Datei konnte nicht gelesen werden: {e}")
-                raw_df = None
-
-            if raw_df is not None:
-                if raw_df.shape[1] < 3:
-                    st.error("Mindestens 3 Spalten erforderlich (A–C).")
-                else:
-                    col_name, col_qty, col_price = raw_df.columns[:3]
-                    rows = []
-                    for _, r in raw_df.iterrows():
-                        raw_name = str(r.get(col_name, "")).strip()
-                        if not raw_name:
-                            continue
-                        name, unit_amount, unit = _parse_article_name(raw_name)
-                        qty = 0.0 if zero_all else _to_float(r.get(col_qty))
-                        price = _to_float(r.get(col_price))
-                        grp = _guess_group(name) or ""
-                        rows.append({
-                            "name": name,
-                            "unit_amount": unit_amount,
-                            "unit": unit,
-                            "stock_qty": qty,
-                            "purchase_price": price,
-                            "group": grp,
-                        })
-
-                    parsed_df = pd.DataFrame(rows, columns=["name", "unit_amount", "unit", "stock_qty", "purchase_price", "group"])
-                    st.subheader("2) Vorschau & Bearbeitung")
-                    st.caption("Du kannst die Felder direkt bearbeiten, inkl. Gruppe.")
-                    edited = st.data_editor(
-                        parsed_df,
-                        use_container_width=True,
-                        num_rows="dynamic",
-                        column_config={
-                            "name": st.column_config.TextColumn("Artikelname", required=True),
-                            "unit_amount": st.column_config.NumberColumn("Menge", step=0.1, format="%.2f"),
-                            "unit": st.column_config.SelectboxColumn("Einheit", options=["ml", "cl", "l", "", None], required=False),
-                            "stock_qty": st.column_config.NumberColumn("Bestand (Stk.)", step=1, format="%.2f"),
-                            "purchase_price": st.column_config.NumberColumn("EK netto (€)", step=0.01, format="%.2f"),
-                            "group": st.column_config.SelectboxColumn("Gruppe", options=groups + [""], required=False),
-                        }
-                    )
-
-                    if st.button("✅ Import / Aktualisieren (Upsert)", use_container_width=True):
-                        ins, upd = 0, 0
-                        for _, row in edited.iterrows():
-                            data = {
-                                "name": str(row["name"]).strip(),
-                                "unit_amount": float(row["unit_amount"]) if pd.notna(row["unit_amount"]) else None,
-                                "unit": (str(row["unit"]).lower() if pd.notna(row["unit"]) and row["unit"] else None),
-                                "stock_qty": _to_float(row["stock_qty"]),
-                                "purchase_price": _to_float(row["purchase_price"]),
-                                "group": (str(row["group"]).strip().lower() if pd.notna(row["group"]) and row["group"] else None),
-                            }
-                            # gruppen, die neu sind, dynamisch ergänzen
-                            if data.get("group") and data["group"] not in _get_groups():
-                                _add_group(data["group"])
-
-                            before_df = _fetch_items_df()
-                            _upsert_item(data)
-                            after_df = _fetch_items_df()
-                            # naive Zählung: wenn neue ID auftauchte
-                            if len(after_df) > len(before_df):
-                                ins += 1
-                            else:
-                                upd += 1
-                        st.success(f"Fertig: {ins} neu · {upd} aktualisiert.")
-                        st.rerun()
-
-    with right:
-        st.subheader("Artikelgruppen")
-        st.caption("Gruppen dienen der Strukturierung (z. B. „bier“, „wein“…).")
-        existing = _get_groups()
-        if existing:
-            st.write("Vorhandene Gruppen:")
-            st.markdown(", ".join([f"`{g}`" for g in existing]))
-        else:
-            st.info("Noch keine Gruppen vorhanden.")
-
-        new_g = st.text_input("Neue Gruppe anlegen", placeholder="z. B. longdrinks")
-        cols = st.columns([1,1])
-        if cols[0].button("➕ Gruppe hinzufügen", use_container_width=True, disabled=not new_g.strip()):
-            if _add_group(new_g.strip().lower()):
-                st.success(f"Gruppe „{new_g}“ hinzugefügt.")
-                st.rerun()
+    # --- Tab 1: Upload ---
+    with tabs[0]:
+        up = st.file_uploader("Excel (.xlsx) oder CSV hochladen", type=["xlsx", "csv"])
+        if up:
+            if up.name.lower().endswith(".xlsx"):
+                raw_df = pd.read_excel(up)
             else:
-                st.error("Gruppe konnte nicht angelegt werden (existiert evtl. schon).")
+                raw_df = pd.read_csv(up, sep=None, engine="python")
 
-        if existing:
-            del_g = st.selectbox("Gruppe löschen", ["—"] + existing, index=0)
-            if cols[1].button("🗑️ Gruppe löschen", use_container_width=True, disabled=(del_g=="—")):
-                if _delete_group(del_g):
-                    st.warning(f"Gruppe „{del_g}“ gelöscht.")
-                    st.rerun()
-                else:
-                    st.error("Löschen fehlgeschlagen.")
+            raw_df = _clean_uploaded_df(raw_df)
+            st.success(f"✅ Datei geladen: {up.name} – {len(raw_df)} Zeilen")
+            st.dataframe(raw_df.head(15), use_container_width=True, height=280)
+            st.session_state["import_raw_df"] = raw_df
+        else:
+            st.info("Bitte Datei hochladen.")
 
-    _divider()
+    # --- Tab 2: Prüfen & Bearbeiten ---
+    with tabs[1]:
+        raw_df: Optional[pd.DataFrame] = st.session_state.get("import_raw_df")
+        if raw_df is None:
+            st.warning("Bitte zuerst eine Datei im Tab **Upload** laden.")
+        else:
+            st.subheader("Spaltenzuordnung")
+            cols = ["(Bitte wählen)"] + list(raw_df.columns)
+            def pick(label, default=None):
+                return st.selectbox(label, cols, index=(cols.index(default) if default in cols else 0))
 
-    # ---------------------------------------------
-    # Admin: bestehende Artikel filtern & bearbeiten
-    # ---------------------------------------------
-    st.subheader("📚 Bestehende Artikel (Datenbank)")
-    groups_all = ["(alle)"] + _get_groups()
-    gcol1, gcol2, gcol3 = st.columns([1, 2, 1])
-    sel_group = gcol1.selectbox("Gruppe", groups_all, index=0)
-    search = gcol2.text_input("Suche (Name enthält)…", "")
-    show_zero = gcol3.checkbox("Nur Bestand = 0", value=False)
+            # sinnvolle Defaults raten
+            guess_name = next((c for c in raw_df.columns if str(c).lower() in ["artikel", "name", "produkt", "bezeichnung"]), None)
+            guess_size = next((c for c in raw_df.columns if "menge" in str(c).lower() or "einheit" in str(c).lower()), None)
+            guess_qty  = next((c for c in raw_df.columns if "stand" in str(c).lower() or "bestand" in str(c).lower()), None)
+            guess_price= next((c for c in raw_df.columns if "preis" in str(c).lower() or "einkauf" in str(c).lower()), None)
 
-    df = _fetch_items_df()
-    if sel_group != "(alle)":
-        df = df[df["group"].fillna("") == sel_group]
-    if search.strip():
-        df = df[df["name"].str.contains(search.strip(), case=False, na=False)]
-    if show_zero:
-        df = df[(df["stock_qty"].fillna(0.0) == 0.0)]
+            m_name = pick("Artikelname *", guess_name)
+            m_size = pick("Menge/Einheit (z.B. 0,2l) – optional", guess_size)
+            m_qty  = pick("Bestand / Inventurstand (Stk) *", guess_qty)
+            m_prc  = pick("Netto-Einkaufspreis (€) *", guess_price)
+            m_pack = pick("Gebinde/Packung (optional)")
+            m_sku  = pick("SKU/Artikelnummer (optional)")
 
-    if df.empty:
-        st.info("Keine passenden Datensätze.")
-        return
+            if st.button("🔁 Vorschau aktualisieren", use_container_width=True, key="refresh_preview"):
+                st.session_state["import_mapped_df"] = _apply_mapping(raw_df, {
+                    "name": m_name if m_name != "(Bitte wählen)" else None,
+                    "size": m_size if m_size != "(Bitte wählen)" else None,
+                    "stock_qty": m_qty if m_qty != "(Bitte wählen)" else None,
+                    "net_price": m_prc if m_prc != "(Bitte wählen)" else None,
+                    "pack": m_pack if m_pack != "(Bitte wählen)" else None,
+                    "sku": m_sku  if m_sku  != "(Bitte wählen)" else None,
+                })
 
-    # Zusatzspalte für Delete-Flag
-    df = df.copy()
-    df["delete"] = False
+            mapped_df: Optional[pd.DataFrame] = st.session_state.get("import_mapped_df")
+            if mapped_df is not None:
+                st.markdown("##### Vorschau & Inline-Bearbeitung")
+                # Kategorien-Liste für Dropdown
+                cat_names = [c["name"] for c in _load_categories()]
+                cfg = {
+                    "name": st.column_config.TextColumn("Artikel"),
+                    "unit_amount": st.column_config.NumberColumn("Menge", step=0.1, format="%.2f"),
+                    "unit": st.column_config.TextColumn("Einheit"),
+                    "net_price": st.column_config.NumberColumn("Einkauf (€)", step=0.01, format="%.2f", help="Netto pro Einheit"),
+                    "stock_qty": st.column_config.NumberColumn("Bestand (Stk)", step=1, format="%.0f", help="Letzter Inventurstand (darf 0 sein)"),
+                    "total_value": st.column_config.NumberColumn("Wert gesamt (€)", disabled=True, format="%.2f"),
+                    "category": st.column_config.SelectboxColumn("Kategorie", options=cat_names or ["—"], help="Wähle oder lege links im Sidebar neue Kategorien an."),
+                    "pack": st.column_config.TextColumn("Gebinde"),
+                    "sku": st.column_config.TextColumn("SKU"),
+                }
+                edit_df = st.data_editor(
+                    mapped_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    column_config=cfg,
+                    key="editor_items_grid",
+                    height=420,
+                )
+                # Total on the fly zeigen
+                tot = float((edit_df["stock_qty"].fillna(0) * edit_df["net_price"].fillna(0)).sum())
+                st.caption(f"Gesamt-Warenwert dieser Auswahl: **{tot:,.2f} €**")
 
-    edited = st.data_editor(
-        df,
-        use_container_width=True,
-        num_rows="dynamic",
-        column_config={
-            "id": st.column_config.NumberColumn("ID", disabled=True),
-            "name": st.column_config.TextColumn("Artikelname", required=True),
-            "unit_amount": st.column_config.NumberColumn("Menge", step=0.1, format="%.2f"),
-            "unit": st.column_config.SelectboxColumn("Einheit", options=["ml", "cl", "l", "", None]),
-            "stock_qty": st.column_config.NumberColumn("Bestand (Stk.)", step=1, format="%.2f"),
-            "purchase_price": st.column_config.NumberColumn("EK netto (€)", step=0.01, format="%.2f"),
-            "group": st.column_config.SelectboxColumn("Gruppe", options=_get_groups() + [""], required=False),
-            "last_updated": st.column_config.TextColumn("Zuletzt aktualisiert", disabled=True),
-            "delete": st.column_config.CheckboxColumn("Löschen"),
-        },
-        hide_index=True,
-    )
+                st.session_state["import_edit_df"] = edit_df
+            else:
+                st.info("Mappe die Spalten und klicke **Vorschau aktualisieren**.")
 
-    a, b = st.columns([1,1])
-    if a.button("💾 Änderungen speichern", use_container_width=True):
-        try:
-            del_ids: List[int] = []
-            for _, r in edited.iterrows():
-                if r.get("delete"):
-                    del_ids.append(int(r["id"]))
-                else:
-                    itm = {
-                        "id": int(r["id"]),
-                        "name": str(r["name"]).strip(),
-                        "unit_amount": float(r["unit_amount"]) if pd.notna(r["unit_amount"]) else None,
-                        "unit": (str(r["unit"]).lower() if pd.notna(r["unit"]) and r["unit"] else None),
-                        "stock_qty": _to_float(r["stock_qty"]),
-                        "purchase_price": _to_float(r["purchase_price"]),
-                        "group": (str(r["group"]).strip().lower() if pd.notna(r["group"]) and r["group"] else None),
+    # --- Tab 3: Speichern ---
+    with tabs[2]:
+        edit_df: Optional[pd.DataFrame] = st.session_state.get("import_edit_df")
+        if edit_df is None or edit_df.empty:
+            st.warning("Bitte zuerst im Tab **Prüfen & Bearbeiten** eine Vorschau erzeugen.")
+        else:
+            st.success(f"Bereit zum Speichern: {len(edit_df)} Artikel")
+            col_a, col_b = st.columns([1, 1])
+            only_new = col_a.checkbox("Nur neue Artikel anlegen (bestehende unverändert lassen)", value=False)
+            normalize  = col_b.checkbox("Einheiten normalisieren (ml→l, g→kg wenn sinnvoll)", value=True)
+
+            if st.button("💾 Alles speichern", use_container_width=True, key="save_items_now"):
+                # Normalisierung
+                df_to_save = edit_df.copy()
+                if normalize:
+                    # ml → l
+                    mask_ml = df_to_save["unit"].str.lower().eq("ml")
+                    df_to_save.loc[mask_ml, "unit_amount"] = df_to_save.loc[mask_ml, "unit_amount"].astype(float) / 1000.0
+                    df_to_save.loc[mask_ml, "unit"] = "l"
+                    # g → kg
+                    mask_g = df_to_save["unit"].str.lower().eq("g")
+                    df_to_save.loc[mask_g, "unit_amount"] = df_to_save.loc[mask_g, "unit_amount"].astype(float) / 1000.0
+                    df_to_save.loc[mask_g, "unit"] = "kg"
+
+                # Speichern (UPSERT)
+                saved, skipped = 0, 0
+                for _, r in df_to_save.iterrows():
+                    # Kategorie ggf. erzeugen
+                    if r.get("category"):
+                        _ensure_category(str(r["category"]).strip())
+
+                    payload = {
+                        "name": str(r.get("name") or "").strip(),
+                        "unit_amount": _to_float(r.get("unit_amount")),
+                        "unit": (str(r.get("unit") or "").strip().lower() or None),
+                        "net_price": _to_float(r.get("net_price")) or 0.0,
+                        "stock_qty": _to_float(r.get("stock_qty")) or 0.0,
+                        "category": (str(r.get("category") or "").strip() or None),
+                        "pack": (str(r.get("pack") or "").strip() or None),
+                        "sku": (str(r.get("sku") or "").strip() or None),
                     }
-                    # neue Gruppe ggf. anlegen
-                    if itm.get("group") and itm["group"] not in _get_groups():
-                        _add_group(itm["group"])
-                    _update_item_by_id(itm)
+                    if not payload["name"]:
+                        continue
 
-            if del_ids:
-                _delete_items_by_ids(del_ids)
+                    if only_new:
+                        # existiert?
+                        with conn() as cn:
+                            c = cn.cursor()
+                            cur = c.execute(
+                                "SELECT 1 FROM items WHERE name=? AND (unit_amount IS ? OR unit_amount=?) AND (unit IS ? OR unit=?)",
+                                (payload["name"], payload["unit_amount"], payload["unit_amount"], payload["unit"], payload["unit"])
+                            ).fetchone()
+                        if cur:
+                            skipped += 1
+                            continue
 
-            st.success("Änderungen gespeichert.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Speichern fehlgeschlagen: {e}")
+                    _upsert_item(payload)
+                    saved += 1
 
-    if b.button("⬇️ CSV-Template herunterladen", use_container_width=True):
-        tpl = pd.DataFrame({
-            "Artikel (z.B. 'Coca Cola 0,2 l')": [],
-            "Bestand": [],
-            "EK Netto (€)": [],
-            "Summe (optional)": [],
-        })
-        st.download_button(
-            "CSV-Template",
-            data=tpl.to_csv(index=False).encode("utf-8-sig"),
-            file_name="artikel_template.csv",
-            mime="text/csv",
-        )
+                st.success(f"Fertig: {saved} Artikel gespeichert, {skipped} übersprungen.")
+                # Aufräumen (optional)
+                # del st.session_state["import_raw_df"]
+                # del st.session_state["import_mapped_df"]
+                # del st.session_state["import_edit_df"]
+
+    st.markdown("---")
+    st.caption("Tipp: Für beste Ergebnisse verwende Spalten: **Artikel**, **Bestand**, **Einkaufspreis** und optional **Menge/Einheit** (z. B. `0,2l`).")
