@@ -2,7 +2,7 @@
 import re
 import hashlib
 import streamlit as st
-from db import conn
+from core.db import conn
 from datetime import datetime
 
 # sehr simple Policy: min 6, 1 Großbuchstabe, 1 Sonderzeichen
