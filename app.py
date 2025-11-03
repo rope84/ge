@@ -104,17 +104,19 @@ def fixed_footer():
     )
    
 # ---------------- Sidebar ----------------
-# ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
-        # Query-Parameter abfangen (z. B. wenn User auf den Footer-Link klickt)
+        # --- 1) Query-Param (Footer-Link) abfangen
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
-            # Query-Parameter danach löschen, um Endlosschleifen zu vermeiden
             st.query_params.clear()
 
-        # Flag für direkten Profilwechsel abfangen
+        # --- 2) Einmal-Navigation über Flag abfangen (aus Modulen wie start.py)
+        if st.session_state.get("nav_to"):
+            st.session_state["nav_choice"] = st.session_state.pop("nav_to")
+
+        # --- 3) Optionaler Profil-Flag (falls du ihn noch nutzt)
         if st.session_state.get("go_profile"):
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
@@ -123,7 +125,7 @@ def sidebar():
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        # Navigation
+        # Navigation (an nav_choice gebunden)
         display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
@@ -137,12 +139,9 @@ def sidebar():
         )
 
         st.divider()
-
-        # Logout
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-        # Footer unten links anzeigen
         fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
