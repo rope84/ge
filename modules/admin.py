@@ -435,5 +435,50 @@ def _render_db_overview():
         c = cn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [r[0] for r in c.fetchall()]
-    if not tables:
-        st.info("Keine Tabellen vorhanden
+        if not tables:
+        st.info("Keine Tabellen vorhanden.")
+        return
+
+    selected_table = st.selectbox("Tabelle auswählen", tables)
+    if selected_table:
+        with conn() as cn:
+            df = pd.read_sql(f"SELECT * FROM {selected_table}", cn)
+        st.dataframe(df, use_container_width=True, height=420)
+
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "📤 CSV exportieren",
+            csv,
+            file_name=f"{selected_table}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
+def _render_backup_admin():
+    section_title("💾 Datenbank-Backups")
+    col_a, col_b = st.columns([1, 1])
+    if col_a.button("🧷 Backup jetzt erstellen", use_container_width=True):
+        created = _create_backup()
+        if created:
+            st.success(f"Backup erstellt: {created.name}")
+        time.sleep(1)
+        st.rerun()
+
+    backups = _list_backups()
+    if not backups:
+        st.info("Keine Backups gefunden.")
+        return
+
+    opt = {f.name: f for f in backups}
+    sel = st.selectbox("Backup auswählen", list(opt.keys()))
+    chosen = opt[sel]
+    st.write(f"📅 {time.ctime(chosen.stat().st_mtime)}")
+    st.write(f"📁 {chosen}")
+    st.write(f"💾 Größe: {_format_size(chosen.stat().st_size)}")
+    ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.")
+    if col_b.button("🔄 Backup wiederherstellen", disabled=not ok, use_container_width=True):
+        with st.spinner("Backup wird wiederhergestellt..."):
+            _restore_backup(chosen)
+            time.sleep(1.0)
+        st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
