@@ -3,6 +3,7 @@ import streamlit as st
 import datetime
 import random
 from core.ui_theme import page_header, section_title, metric_card
+from core.config import APP_NAME, APP_VERSION
 
 # --- Tages-Sprüche / Zitate ---
 QUOTES = [
@@ -60,5 +61,5 @@ def render_start(username: str):
     # Optionaler Footer mit kleinerem Text
     st.caption(
         "💡 Tipp: Du kannst jederzeit links im Menü zwischen den Modulen wechseln.\n"
-        "© 2025 Roman Petek | Gastro Essentials Beta 1"
+        f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}"
     )
