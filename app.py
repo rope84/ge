@@ -53,7 +53,6 @@ def logout():
     st.rerun()
 
 def login_screen():
-    import auth
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
     if pressed:
         ok = getattr(auth, "_do_login")(u, p)
