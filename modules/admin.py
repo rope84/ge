@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 import shutil, time, datetime
 from pathlib import Path
-from db import BACKUP_DIR, DB_PATH, conn
-from ui_theme import page_header, section_title, metric_card
+from core.db import BACKUP_DIR, DB_PATH, conn
+from core.ui_theme import page_header, section_title, metric_card
 
 APP_VERSION = "Gastro Essentials – Beta 1"
 
