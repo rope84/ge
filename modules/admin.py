@@ -261,7 +261,7 @@ def _render_home():
     st.divider()
 
     # Backup-Status (separater Block – ohne Tabellen/Charts)
-    section_title("Backup")
+        section_title("Backup")
     last_text = "—"
     if last_bkp_dt:
         last_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
@@ -282,13 +282,14 @@ def _render_home():
             """,
             unsafe_allow_html=True
         )
+
     with br:
         if st.button("🧷 Backup jetzt erstellen", key="bkp_create_home", use_container_width=True):
-    created = _create_backup()
-    if created:
-        st.success(f"Backup erstellt: {created.name}")
-    time.sleep(1)
-    st.rerun()
+            created = _create_backup()
+            if created:
+                st.success(f"Backup erstellt: {created.name}")
+            time.sleep(1)
+            st.rerun()
 
     st.markdown("---")
 
