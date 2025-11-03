@@ -29,7 +29,6 @@ def get_daily_quote():
 def render_start(username: str):
     # Header im zentralen Design
     page_header("Willkommen", f"Hi {username}, was möchtest du heute machen?")
-    section_title("Schnellauswahl")
 
     # Lustiger Spruch / Zitat
     st.markdown(
