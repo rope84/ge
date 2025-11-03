@@ -3,12 +3,11 @@ import pandas as pd
 import shutil
 import time
 import datetime
-import plotly.express as px
 from pathlib import Path
 from typing import Optional, List
 
 from core.db import BACKUP_DIR, DB_PATH, conn
-from core.ui_theme import page_header, section_title, metric_card
+from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.config import APP_NAME, APP_VERSION
 
@@ -21,7 +20,7 @@ DEFAULT_CHANGELOG_NOTES = {
         "Verbessertes Profil-Modul inkl. Passwort ändern",
         "Inventur mit Monatslogik & PDF-Export",
         "Abrechnung poliert: Garderobe-Logik, Voucher-Einbezug",
-        "Datenbank-Backups inkl. Restore-Funktion (manuell)"
+        "Datenbank-Backups: manuell, Statusanzeige"
     ]
 }
 
@@ -138,7 +137,7 @@ def _count_rows(table: str) -> int:
 
 
 # ---------------- Backups (manuell, BCK_YYYYMMDD_HHMMSS.bak) ----------------
-def _list_backups() -> list[Path]:
+def _list_backups() -> List[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted(BACKUP_DIR.glob("BCK_*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files
@@ -175,11 +174,25 @@ def _format_size(bytes_: int) -> str:
     return f"{bytes_ / (1024 * 1024):.1f} MB"
 
 
-# ---------------- Übersicht / Dashboard ----------------
-def _status_badge(days: Optional[int]) -> tuple[str, str, str]:
+# ---------------- UI Helpers (Badges / Status) ----------------
+def _role_badge(role: str) -> str:
+    colors = {
+        "admin": "#e11d48",      # rose-600
+        "barlead": "#0ea5e9",    # sky-500
+        "user": "#10b981",       # emerald-500
+        "inventur": "#f59e0b",   # amber-500
+    }
+    color = colors.get(role, "#6b7280")
+    return f"<span style='background:{color}; color:white; padding:2px 6px; border-radius:999px; font-size:11px;'>{role}</span>"
+
+
+def _pill(text: str, color: str = "#10b981") -> str:
+    return f"<span style='background:{color}22; color:{color}; padding:2px 6px; border:1px solid {color}55; border-radius:999px; font-size:11px;'>{text}</span>"
+
+
+def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
     """
-    Gibt (farbe, label, tooltip) zurück.
-    Regeln: None => rot (kein Backup); <=5 grün; 6-7 gelb; >7 rot.
+    Backup-Regeln: None => rot (kein Backup); <=5 grün; 6-7 gelb; >7 rot.
     """
     if days is None:
         return ("red", "Kein Backup", "Es wurde noch kein Backup gefunden.")
@@ -190,6 +203,7 @@ def _status_badge(days: Optional[int]) -> tuple[str, str, str]:
     return ("red", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
 
 
+# ---------------- Übersicht / Dashboard ----------------
 def _render_home():
     section_title("Systemstatus")
 
@@ -197,15 +211,13 @@ def _render_home():
     users_cnt = _count_rows("users")
     emp_cnt   = _count_rows("employees")
     fix_cnt   = _count_rows("fixcosts")
-    bkp_files = _list_backups()
-    bkp_cnt   = len(bkp_files)
 
     # Backup-Status
     last_bkp_dt = _last_backup_time()
     days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
-    badge_color, badge_label, badge_tip = _status_badge(days_since)
+    badge_color, badge_label, badge_tip = _status_badge_from_days(days_since)
 
-    # Gesamtstatus (inkl. Benutzer/Mitarbeiter)
+    # System-Hinweise
     issues = []
     if users_cnt == 0:
         issues.append("Keine Benutzer angelegt.")
@@ -214,35 +226,24 @@ def _render_home():
     if badge_color in ("gold", "red"):
         issues.append(badge_tip)
 
-    # Einzeilige Anzeige: links kompakter Status, rechts inline-Details
+    # Eine Zeile: links kompakter Systemblock, rechts Inline-Details
     left, right = st.columns([5, 3])
-
     with left:
-        # kleines Badge + Text + Tooltip-Icon (hover)
-        last_bkp_text = "—"
-        if last_bkp_dt:
-            last_bkp_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
         today_str = datetime.date.today().strftime("%d.%m.%Y")
-
         st.markdown(
             f"""
-            <div style='display:flex; align-items:center; gap:10px;
-                        background:rgba(255,255,255,0.03); padding:8px 12px;
-                        border-radius:10px;'>
-              <span style='display:inline-block; width:10px; height:10px;
-                           border-radius:50%; background:{badge_color};'></span>
+            <div style='display:flex; gap:10px; align-items:center;
+                        background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:10px;'>
+              <span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:{badge_color};'></span>
               <div style='font-size:13px;'>
                 <b>Status: {badge_label}</b>
-                <span title="{badge_tip}" style="opacity:0.7; cursor:help;">ⓘ</span><br>
-                <span style='font-size:12px; opacity:0.85;'>
-                  Letztes Backup: <b>{last_bkp_text}</b> · Prüfung: {today_str}
-                </span>
+                <span title="Systemprüfung und letzte Sicherung" style="opacity:0.7; cursor:help;">ⓘ</span><br>
+                <span style='font-size:12px; opacity:0.85;'>Prüfung: {today_str}</span>
               </div>
             </div>
             """,
             unsafe_allow_html=True
         )
-
     with right:
         if issues:
             with st.expander("🔍 Details", expanded=False):
@@ -252,37 +253,42 @@ def _render_home():
             st.caption("🟢 Keine Hinweise")
 
     # KPIs kompakt
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Version", APP_VERSION)
     c2.metric("Benutzer", users_cnt)
     c3.metric("Mitarbeiter", emp_cnt)
-    c4.metric("Backups", bkp_cnt)
 
     st.divider()
 
-    # Charts (nur Backup-Trend)
-    files = bkp_files[:12]
-    left, right = st.columns(2)
-    with left:
-        if files:
-            data = [{
-                "Backup": f.name.replace(".bak", ""),
-                "Größe (MB)": round(f.stat().st_size / (1024*1024), 2),
-                "Datum": datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%d.%m.%Y %H:%M")
-            } for f in files]
-            df_b = pd.DataFrame(data)
-            fig2 = px.bar(df_b, x="Backup", y="Größe (MB)", title="Letzte Backups (Größe)")
-            st.plotly_chart(fig2, use_container_width=True)
-        else:
-            st.info("Noch keine Backups vorhanden.")
-    with right:
-        # kleine Tabelle der letzten Backups
-        if files:
-            st.dataframe(
-                pd.DataFrame([{"Backup": f.name, "Datum": datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%d.%m.%Y %H:%M"),
-                               "Größe": _format_size(f.stat().st_size)} for f in files]),
-                use_container_width=True, height=320, hide_index=True
-            )
+    # Backup-Status (separater Block – ohne Tabellen/Charts)
+    section_title("Backup")
+    last_text = "—"
+    if last_bkp_dt:
+        last_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
+
+    bl, br = st.columns([5, 3])
+    with bl:
+        st.markdown(
+            f"""
+            <div style='display:flex; gap:10px; align-items:center;
+                        background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:10px;'>
+              <span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:{badge_color};'></span>
+              <div style='font-size:13px;'>
+                <b>Backup-Status: {badge_label}</b>
+                <span title="{badge_tip}" style="opacity:0.7; cursor:help;">ⓘ</span><br>
+                <span style='font-size:12px; opacity:0.85;'>Letztes Backup: <b>{last_text}</b></span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with br:
+        if st.button("🧷 Backup jetzt erstellen", use_container_width=True):
+            created = _create_backup()
+            if created:
+                st.success(f"Backup erstellt: {created.name}")
+            time.sleep(1)
+            st.rerun()
 
     st.markdown("---")
 
@@ -341,14 +347,19 @@ def _render_user_admin():
         st.info("Noch keine Benutzer angelegt.")
     else:
         for uid, uname, role, email, first, last in users:
-            with st.expander(f"{uname} ({role})", expanded=False):
+            role_tag = _role_badge(role)
+            with st.expander(f"{uname}  ", expanded=False):
+                # Rolle als Badge in der Kopfzeile anzeigen
+                st.markdown(role_tag, unsafe_allow_html=True)
+
                 a1, a2 = st.columns(2)
                 e_username = a1.text_input("Benutzername (Login/Anzeige)", uname, key=f"u_username_{uid}")
                 e_role  = a2.selectbox("Rolle", ["admin", "barlead", "user", "inventur"],
                                        index=["admin","barlead","user","inventur"].index(role),
                                        key=f"u_role_{uid}")
-                e_first = st.text_input("Vorname", first or "", key=f"u_first_{uid}")
-                e_last  = st.text_input("Nachname", last or "", key=f"u_last_{uid}")
+                b1, b2 = st.columns(2)
+                e_first = b1.text_input("Vorname", first or "", key=f"u_first_{uid}")
+                e_last  = b2.text_input("Nachname", last or "", key=f"u_last_{uid}")
                 e_email = st.text_input("E-Mail", email or "", key=f"u_mail_{uid}")
                 new_pw  = st.text_input("Neues Passwort (optional)", type="password", key=f"u_pw_{uid}")
 
@@ -357,7 +368,7 @@ def _render_user_admin():
                     try:
                         with conn() as cn:
                             c = cn.cursor()
-                            # Username darf UNIQUE sein -> daher separat updaten
+                            # Username (UNIQUE) und restliche Felder aktualisieren
                             c.execute("""UPDATE users
                                          SET username=?, role=?, first_name=?, last_name=?, email=?
                                          WHERE id=?""",
@@ -416,6 +427,7 @@ def _render_employee_admin():
                 e_con = c1.text_input("Vertrag", contract, key=f"e_con_{eid}")
                 e_hour = c2.number_input("Stundenlohn (€)", value=float(hourly or 0.0), step=0.5, key=f"e_hour_{eid}")
                 e_lead = st.checkbox("Barleiter", value=bool(lead), key=f"e_lead_{eid}")
+
                 s1, s2 = st.columns(2)
                 if s1.button("💾 Speichern", key=f"e_save_{eid}"):
                     with conn() as cn:
@@ -465,7 +477,15 @@ def _render_fixcost_admin():
         st.info("Noch keine Fixkosten erfasst.")
     else:
         for fid, name, amount, note, active in costs:
-            with st.expander(f"{name} – {amount:.2f} € {'(aktiv)' if active else '(inaktiv)'}", expanded=False):
+            state_emoji = "🟢" if active else "⚪"
+            with st.expander(f"{state_emoji} {name} – {amount:.2f} €", expanded=False):
+                # Badge im Body
+                st.markdown(
+                    _pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"),
+                    unsafe_allow_html=True
+                )
+                st.write("")  # kleine Lücke
+
                 c1, c2 = st.columns([2, 1])
                 e_name = c1.text_input("Bezeichnung", value=name, key=f"fc_name_{fid}")
                 e_amount = c2.number_input("Betrag (€)", value=float(amount or 0.0), step=10.0, key=f"fc_amount_{fid}")
@@ -517,10 +537,8 @@ def _render_backup_admin():
 
     # Letztes Backup prominent anzeigen
     lb = _last_backup_time()
-    if lb:
-        st.caption(f"Letztes Backup: **{lb.strftime('%d.%m.%Y %H:%M')}**")
-    else:
-        st.caption("Letztes Backup: **—**")
+    last_text = lb.strftime("%d.%m.%Y %H:%M") if lb else "—"
+    st.caption(f"Letztes Backup: **{last_text}**")
 
     col_a, col_b = st.columns([1, 1])
 
