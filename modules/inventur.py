@@ -8,6 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from core.db import conn
 from core.ui_theme import page_header, section_title, metric_card
+from core.config import APP_NAME, APP_VERSION
 
 EXCEL_PATH = "versuch3.xlsx"
 EXPORT_DIR = "exports"
@@ -294,3 +295,5 @@ def render_inventur(role: str, username: str):
                                file_name=os.path.basename(fname),
                                mime="application/pdf",
                                key=f"pdf_{year}_{sel_month}")
+                  
+          st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
