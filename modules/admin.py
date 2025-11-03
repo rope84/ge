@@ -572,15 +572,19 @@ if col_b.button("🔄 Backup wiederherstellen", key="bkp_restore_action", disabl
 
 # ---------------- Haupt-Render ----------------
 def render_admin():
+    """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
 
+    # Basis-Hooks
     _ensure_tables()
     _ensure_version_logged()
 
+    # Kopf
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
+    # Tabs
     tabs = st.tabs([
         "🏠 Übersicht",
         "👤 Benutzer",
