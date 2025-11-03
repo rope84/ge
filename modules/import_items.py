@@ -1,14 +1,15 @@
+import re
 import streamlit as st
 import pandas as pd
 from core.db import conn
 from core.ui_theme import section_title
+
 
 # -------------------------------
 # Hilfsfunktionen
 # -------------------------------
 
 def _ensure_items_table():
-    """Stellt sicher, dass Tabelle 'items' existiert und alle benötigten Spalten enthält."""
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
@@ -21,7 +22,6 @@ def _ensure_items_table():
         """)
         cn.commit()
 
-        # Prüfen, ob Spalten fehlen und ergänzen
         cols = [r[1] for r in c.execute("PRAGMA table_info(items)").fetchall()]
         add_cols = []
         if "purchase_price" not in cols:
@@ -36,8 +36,40 @@ def _ensure_items_table():
         cn.commit()
 
 
+def _parse_unit_from_name(name: str) -> str:
+    """Versucht, aus einem Artikelnamen automatisch eine Einheit zu erkennen (z. B. 0,2l oder 1/8)."""
+    if not name:
+        return ""
+
+    text = name.lower().replace(" ", "")
+
+    # Bruch-Angaben wie 1/8 oder 1/4
+    match_frac = re.search(r"(\d+)[/](\d+)", text)
+    if match_frac:
+        num = int(match_frac.group(1))
+        den = int(match_frac.group(2))
+        val = round(num / den, 3)
+        return f"{val}l"
+
+    # Dezimalangaben mit Komma oder Punkt, z. B. 0,2l oder 0.33L
+    match_dec = re.search(r"(\d+[.,]?\d*)\s*(l|cl|ml)", text)
+    if match_dec:
+        num = match_dec.group(1).replace(",", ".")
+        unit = match_dec.group(2).lower()
+        # Konvertierung: ml → l / cl → l
+        if unit == "ml":
+            val = round(float(num) / 1000, 3)
+            return f"{val}l"
+        elif unit == "cl":
+            val = round(float(num) / 100, 3)
+            return f"{val}l"
+        else:
+            return f"{num}l"
+
+    return ""
+
+
 def _save_items(df: pd.DataFrame):
-    """Schreibt DataFrame in Tabelle 'items'."""
     _ensure_items_table()
     with conn() as cn:
         c = cn.cursor()
@@ -45,7 +77,10 @@ def _save_items(df: pd.DataFrame):
             name = str(row.get("Artikel", "")).strip()
             if not name:
                 continue
+            # Einheit automatisch erkennen, falls leer
             unit = str(row.get("Einheit", "")).strip()
+            if not unit:
+                unit = _parse_unit_from_name(name)
             qty = float(row.get("Menge", 0) or 0)
             price = float(row.get("Einkaufspreis", 0) or 0)
             cat = str(row.get("Kategorie", "")).strip()
@@ -58,7 +93,6 @@ def _save_items(df: pd.DataFrame):
 
 
 def _styled_box(title, content, color="#1E1E1E"):
-    """Schöne Box mit Schatten und Titel."""
     st.markdown(
         f"""
         <div style="
@@ -104,7 +138,6 @@ def render_import_items():
                 st.success(f"✅ Datei geladen – {len(df)} Zeilen, {len(df.columns)} Spalten.")
                 st.dataframe(df.head(), use_container_width=True)
 
-                # Spaltenvorschläge automatisch erkennen
                 possible_mappings = {
                     "Artikel": next((c for c in df.columns if "art" in c.lower() or "produkt" in c.lower()), None),
                     "Einheit": next((c for c in df.columns if "einheit" in c.lower() or "inhalt" in c.lower()), None),
@@ -149,6 +182,12 @@ def render_import_items():
         new_df["Menge"] = pd.to_numeric(new_df["Menge"], errors="coerce").fillna(0)
         new_df["Einkaufspreis"] = pd.to_numeric(new_df["Einkaufspreis"], errors="coerce").fillna(0)
         new_df["Gesamtwert"] = new_df["Menge"] * new_df["Einkaufspreis"]
+
+        # Automatische Einheitserkennung für leere Einheiten
+        new_df["Einheit"] = new_df.apply(
+            lambda x: x["Einheit"] if x["Einheit"] else _parse_unit_from_name(x["Artikel"]),
+            axis=1
+        )
 
         _styled_box("3️⃣ Artikeldaten prüfen", "Bearbeite hier alle Felder direkt in der Tabelle.")
         edited = st.data_editor(new_df, use_container_width=True, hide_index=True, num_rows="dynamic", key="edited_items")
