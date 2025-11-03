@@ -283,12 +283,12 @@ def _render_home():
             unsafe_allow_html=True
         )
     with br:
-        if st.button("🧷 Backup jetzt erstellen", use_container_width=True):
-            created = _create_backup()
-            if created:
-                st.success(f"Backup erstellt: {created.name}")
-            time.sleep(1)
-            st.rerun()
+        if st.button("🧷 Backup jetzt erstellen", key="bkp_create_home", use_container_width=True):
+    created = _create_backup()
+    if created:
+        st.success(f"Backup erstellt: {created.name}")
+    time.sleep(1)
+    st.rerun()
 
     st.markdown("---")
 
@@ -542,12 +542,12 @@ def _render_backup_admin():
 
     col_a, col_b = st.columns([1, 1])
 
-    if col_a.button("🧷 Backup jetzt erstellen", use_container_width=True):
-        created = _create_backup()
-        if created:
-            st.success(f"Backup erstellt: {created.name}")
-        time.sleep(1)
-        st.rerun()
+    if col_a.button("🧷 Backup jetzt erstellen", key="bkp_create_admin", use_container_width=True):
+    created = _create_backup()
+    if created:
+        st.success(f"Backup erstellt: {created.name}")
+    time.sleep(1)
+    st.rerun()
 
     backups = _list_backups()
     if not backups:
@@ -561,12 +561,12 @@ def _render_backup_admin():
     st.write(f"📁 {chosen}")
     st.write(f"💾 Größe: {_format_size(chosen.stat().st_size)}")
 
-    ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.")
-    if col_b.button("🔄 Backup wiederherstellen", disabled=not ok, use_container_width=True):
-        with st.spinner("Backup wird wiederhergestellt..."):
-            _restore_backup(chosen)
-            time.sleep(1.0)
-        st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
+    ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.", key="bkp_restore_confirm")
+if col_b.button("🔄 Backup wiederherstellen", key="bkp_restore_action", disabled=not ok, use_container_width=True):
+    with st.spinner("Backup wird wiederhergestellt..."):
+        _restore_backup(chosen)
+        time.sleep(1.0)
+    st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
 
 # ---------------- Haupt-Render ----------------
