@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 import datetime as dt
 import plotly.express as px
-from db import conn
-from ui_theme import page_header, section_title, metric_card
+from core.db import conn
+from core.ui_theme import page_header, section_title, metric_card
 
 
 # ----------------------------------------------------------
