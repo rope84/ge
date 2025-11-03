@@ -260,13 +260,15 @@ def _render_home():
 
     st.divider()
 
-    # Backup-Status (separater Block – ohne Tabellen/Charts)
-        section_title("Backup")
+        # Backup-Status (separater Block – ohne Tabellen/Charts)
+    section_title("Backup")
+
     last_text = "—"
     if last_bkp_dt:
         last_text = last_bkp_dt.strftime("%d.%m.%Y %H:%M")
 
     bl, br = st.columns([5, 3])
+
     with bl:
         st.markdown(
             f"""
@@ -290,7 +292,6 @@ def _render_home():
                 st.success(f"Backup erstellt: {created.name}")
             time.sleep(1)
             st.rerun()
-
     st.markdown("---")
 
     # Changelog klein & aktuell
