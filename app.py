@@ -111,16 +111,7 @@ def fixed_footer():
         unsafe_allow_html=True,
     )
  
-    # Restliche Infos
-    st.markdown(
-        f"""
-        <div class="footer">
-            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
-            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    
     
 # ---------------- Sidebar ----------------
 def sidebar():
