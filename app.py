@@ -124,7 +124,25 @@ def sidebar():
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-fixed_footer()
+def sidebar():
+    with st.sidebar:
+        st.markdown(f"### {APP_NAME}")
+        st.caption(APP_VERSION)
+
+        display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
+        if st.session_state.role == "admin":
+            display_pages.append("Admin-Cockpit")
+
+        choice_display = st.radio("Navigation", display_pages, label_visibility="collapsed")
+        st.session_state.nav_choice = choice_display
+
+        st.divider()
+
+        if st.session_state.auth and st.button("Logout", use_container_width=True):
+            logout()
+
+        # 👇 Footer wird jetzt korrekt im Sidebar-Kontext gerendert
+        fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
