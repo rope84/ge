@@ -66,6 +66,47 @@ def login_screen():
         else:
             st.error("❌ Falscher Benutzername oder Passwort")
 
+# ---------------- Fixed Footer ----------------
+def fixed_footer():
+    from core.config import APP_NAME, APP_VERSION
+    import streamlit as st
+
+    # CSS + HTML + Klickverhalten via Streamlit-Link
+    st.markdown(
+        f"""
+        <style>
+        .footer {{
+            position: fixed;
+            bottom: 10px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            color: gray;
+            opacity: 0.85;
+            line-height: 1.4em;
+        }}
+        .footer a {{
+            color: #bbb;
+            text-decoration: none;
+            font-weight: bold;
+        }}
+        .footer a:hover {{
+            color: white;
+            text-decoration: underline;
+        }}
+        </style>
+
+        <div class="footer">
+            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a>
+            &nbsp;·&nbsp;
+            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
@@ -83,16 +124,7 @@ def sidebar():
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-small_footer(
-    f"""
-    <div style='text-align:center; font-size:12px; color:gray; line-height:1.35em;'>
-        👤 <b>{st.session_state.get('username','Gast')}</b>
-        &nbsp;·&nbsp;
-        <span style='opacity:.85'>{st.session_state.get('role','guest')}</span><br>
-        <span style='opacity:.75'>{APP_NAME} {APP_VERSION}</span>
-    </div>
-    """
-)
+fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
