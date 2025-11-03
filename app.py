@@ -83,30 +83,16 @@ def sidebar():
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-def small_footer():
-    from core.config import APP_NAME, APP_VERSION
-    import streamlit as st
-
-    st.markdown(
-        f"""
-        <div style="
-            position: absolute;
-            bottom: 10px;
-            left: 0;
-            width: 100%;
-            text-align: center;
-            font-size: 12px;
-            color: gray;
-            opacity: 0.8;
-            line-height: 1.4em;
-        ">
-            👤 <b>{st.session_state.get('username', 'Gast')}</b> · 
-            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
-            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+small_footer(
+    f"""
+    <div style='text-align:center; font-size:12px; color:gray; line-height:1.35em;'>
+        👤 <b>{st.session_state.get('username','Gast')}</b>
+        &nbsp;·&nbsp;
+        <span style='opacity:.85'>{st.session_state.get('role','guest')}</span><br>
+        <span style='opacity:.75'>{APP_NAME} {APP_VERSION}</span>
+    </div>
+    """
+)
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
