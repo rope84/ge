@@ -317,4 +317,4 @@ def render_admin():
                 st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
     st.markdown("---")
-    st.caption(f"© 2025 Roman Petek – Gastro Essentials {APP_VERSION}")
+    st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
