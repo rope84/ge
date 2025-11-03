@@ -331,35 +331,42 @@ def _to_float(x) -> float:
 
 # ---------------- Übersicht ----------------
 def _render_home():
+    # Live-Zahlen
     users_cnt = _count_rows("users")
     emp_cnt   = _count_rows("employees")
     fix_cnt   = _count_rows("fixcosts")
     backups   = _list_backups()
     total_backups = len(backups)
 
+    # Backup-Status
     last_bkp_dt = _last_backup_time()
     days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
-    color, label, tip = _status_badge_from_days(days_since)
+    color_bkp, label_bkp, tip_bkp = _status_badge_from_days(days_since)
 
-    db_size = _db_size_mb()
-    num_tables, total_rows = _db_table_stats()
-
-    # Hinweise
+    # System-Gesamtstatus (grün wenn keine Issues)
     issues = []
     if users_cnt == 0:
         issues.append("Keine Benutzer angelegt.")
     if emp_cnt == 0:
         issues.append("Keine Mitarbeiter angelegt.")
-    if color in ("#f59e0b", "#ef4444"):
-        issues.append(tip)
+    if color_bkp in ("#f59e0b", "#ef4444"):
+        issues.append(tip_bkp)
 
-    left, right = st.columns(2, gap="large")
+    # Ampelfarbe für Systemstatus ableiten
+    color_sys = "#22c55e" if not issues else ("#f59e0b" if any("empfohlen" in x for x in issues) else "#ef4444")
+    today_str = datetime.date.today().strftime("%d.%m.%Y")
 
-    with left:
-        today_str = datetime.date.today().strftime("%d.%m.%Y")
-        html = _card_html(
+    # Datenbankstatus
+    db_size = _db_size_mb()
+    num_tables, total_rows = _db_table_stats()
+
+    # --- obere Zeile: Systemstatus (links) + Backupstatus (rechts) ---
+    col_left, col_right = st.columns(2, gap="large")
+
+    with col_left:
+        html_sys = _small_status_card(
             "Systemstatus",
-            "#22c55e" if not issues else "#f59e0b" if any("empfohlen" in x for x in issues) else "#ef4444",
+            color_sys,
             [
                 f"Prüfung: {today_str}",
                 f"Benutzer: {users_cnt}",
@@ -367,22 +374,23 @@ def _render_home():
                 f"Fixkosten: {fix_cnt}",
             ]
         )
-        st.markdown(html, unsafe_allow_html=True)
+        st.markdown(html_sys, unsafe_allow_html=True)
 
-    with right:
+    with col_right:
         last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
-        html_b = _card_html(
+        html_bkp = _small_status_card(
             "Backupstatus",
-            color,
+            color_bkp,
             [
-                f"Status: {label}",
-                f"Info: {tip}",
+                f"Status: {label_bkp}",
+                f"Info: {tip_bkp}",
                 f"Letztes Backup: {last_text}",
                 f"Backups gesamt: {total_backups}",
             ]
         )
-        st.markdown(html_b, unsafe_allow_html=True)
+        st.markdown(html_bkp, unsafe_allow_html=True)
 
+    # Details nur bei Warnungen/Fehlern anzeigen – rechts als Expander
     if issues:
         with st.expander("🔍 Systemhinweise öffnen", expanded=False):
             for issue in issues:
@@ -392,20 +400,24 @@ def _render_home():
 
     st.divider()
 
-    # Datenbankstatus-Block
+    # --- Datenbankstatus im gleichen Stil wie oben ---
     section_title("🗂️ Datenbankstatus")
-    db_details = [
-        f"📦 Dateigröße: **{db_size} MB**",
-        f"🧩 Tabellen: **{num_tables}**",
-        f"🔢 Gesamtzeilen: **{total_rows}**",
-        f"💾 Backups gesamt: **{total_backups}**",
-    ]
-    for d in db_details:
-        st.markdown(d)
+    color_db = "#22c55e"  # neutral grün (keine Ampellogik nötig)
+    html_db = _small_status_card(
+        "Datenbank",
+        color_db,
+        [
+            f"📦 Dateigröße: {db_size} MB",
+            f"🧩 Tabellen: {num_tables}",
+            f"🔢 Gesamtzeilen: {total_rows}",
+            f"💾 Backups gesamt: {total_backups}",
+        ]
+    )
+    st.markdown(html_db, unsafe_allow_html=True)
 
     st.divider()
 
-    # Changelog
+    # --- Changelog klein & aktuell ---
     section_title("📝 Änderungsprotokoll")
     with conn() as cn:
         df = pd.read_sql(
