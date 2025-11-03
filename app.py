@@ -89,10 +89,12 @@ def fixed_footer():
         unsafe_allow_html=True,
     )
 
-    # Button wie Link – setzt nur einen Flag, NICHT nav_choice direkt!
+    # 👇 dynamischer Key: Username + "footer_user"
+    btn_key = f"footer_user_{st.session_state.get('username', 'guest')}"
+
     if st.button(
         f"👤 {st.session_state.get('username', 'Gast')}",
-        key="footer_user",
+        key=btn_key,
         help="Profil öffnen",
         use_container_width=False,
     ):
@@ -108,7 +110,6 @@ def fixed_footer():
         """,
         unsafe_allow_html=True,
     )
-
     # Button, der wie ein Link aussieht
     if st.button(
         f"👤 {st.session_state.get('username', 'Gast')}",
