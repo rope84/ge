@@ -2,7 +2,7 @@
 import streamlit as st
 import datetime
 import random
-from ui_theme import page_header, section_title, metric_card
+from core.ui_theme import page_header, section_title, metric_card
 
 # --- Tages-Sprüche / Zitate ---
 QUOTES = [
@@ -33,9 +33,9 @@ def render_start(username: str):
 
     # Lustiger Spruch / Zitat
     st.markdown(
-        f"<p style='font-size:18px; font-style:italic; color:gray;'>💬 {get_daily_quote()}</p>",
-        unsafe_allow_html=True
-    )
+    f"<p style='text-align:center; font-size:17px; font-style:italic; opacity:0.8;'>💬 {get_daily_quote()}</p>",
+    unsafe_allow_html=True
+)
 
     st.divider()
 
@@ -43,20 +43,17 @@ def render_start(username: str):
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("💰 Abrechnung öffnen", use_container_width=True):
-            st.session_state["page"] = "Abrechnung"
-            st.success("Wechsle zur Abrechnung …")
+            st.session_state["nav_choice"] = "Abrechnung"
             st.rerun()
 
     with col2:
         if st.button("📦 Inventur starten", use_container_width=True):
-            st.session_state["page"] = "Inventur"
-            st.info("Inventur wird geladen …")
+            st.session_state["nav_choice"] = "Inventur"
             st.rerun()
 
     with col3:
         if st.button("📊 Dashboard ansehen", use_container_width=True):
-            st.session_state["page"] = "Dashboard"
-            st.info("Dashboard wird geöffnet …")
+            st.session_state["nav_choice"] = "Dashboard"
             st.rerun()
 
     st.divider()
