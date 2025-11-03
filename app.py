@@ -4,7 +4,8 @@ import traceback
 
 from db import setup_db
 from auth import seed_admin_if_empty
-from ui_theme import use_theme, page_header, small_footer, render_login_form
+from ui_theme import use_theme, page_header, small_footer
+from login import render_login_form
 
 APP_NAME = "Gastro Essentials"
 APP_VERSION = "Beta 1"
