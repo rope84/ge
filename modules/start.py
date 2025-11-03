@@ -60,6 +60,6 @@ def render_start(username: str):
 
     # Optionaler Footer mit kleinerem Text
     st.caption(
-        "💡 Tipp: Du kannst jederzeit links im Menü zwischen den Modulen wechseln.\n"
+        "💡 Tipp: Du kannst jederzeit links im Menü zwischen den Modulen wechseln.\n",
         f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}"
     )
