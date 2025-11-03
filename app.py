@@ -69,8 +69,8 @@ def login_screen():
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
-    import streamlit as st
 
+    # CSS Styling für Sidebar-Bereich
     st.markdown(
         """
         <style>
@@ -104,30 +104,26 @@ def fixed_footer():
         unsafe_allow_html=True,
     )
 
-    # 👉 statt Link: Streamlit-Button, der wie ein Textlink aussieht
-    footer_col = st.container()
-    with footer_col:
-        clicked = st.button(
-            f"👤 {st.session_state.get('username', 'Gast')}",
-            key="footer_user",
-            help="Profil öffnen",
-            use_container_width=False,
-        )
-
-        st.markdown(
-            f"""
-            <div class="footer">
-                🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
-                <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # ✅ Wenn auf Usernamen geklickt wurde → direkt auf Profilseite umschalten
-    if clicked:
+    # Button, der wie ein Link aussieht
+    if st.button(
+        f"👤 {st.session_state.get('username', 'Gast')}",
+        key="footer_user",
+        help="Profil öffnen",
+        use_container_width=False,
+    ):
         st.session_state.nav_choice = "Profil"
         st.rerun()
+
+    # Restliche Infos
+    st.markdown(
+        f"""
+        <div class="footer">
+            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
 # ---------------- Sidebar ----------------
 def sidebar():
@@ -135,40 +131,26 @@ def sidebar():
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
+        # Navigation – an Session-State gebunden
         display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
 
         st.radio(
-    "Navigation",
-    display_pages,
-    index=display_pages.index(st.session_state.get("nav_choice", "Start")),
-    label_visibility="collapsed",
-    key="nav_choice",   # <— bindet das Radio direkt an den Session-State
-)
-
-        st.divider()
-        if st.session_state.auth and st.button("Logout", use_container_width=True):
-            logout()
-
-def sidebar():
-    with st.sidebar:
-        st.markdown(f"### {APP_NAME}")
-        st.caption(APP_VERSION)
-
-        display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
-        if st.session_state.role == "admin":
-            display_pages.append("Admin-Cockpit")
-
-        choice_display = st.radio("Navigation", display_pages, label_visibility="collapsed")
-        st.session_state.nav_choice = choice_display
+            "Navigation",
+            display_pages,
+            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
+            label_visibility="collapsed",
+            key="nav_choice",   # direkter Bind an Session-State
+        )
 
         st.divider()
 
+        # Logout-Button
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-        # 👇 Footer wird jetzt korrekt im Sidebar-Kontext gerendert
+        # 👇 Footer immer unten in der Sidebar anzeigen
         fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
