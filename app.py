@@ -14,8 +14,6 @@ setup_db()
 seed_admin_if_empty()
 
 # ---------------- Dynamic Module Import ----------------
-# ---------------- Dynamic Module Import ----------------
-# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors = {}, {}
 
@@ -106,27 +104,30 @@ def fixed_footer():
     )
    
 # ---------------- Sidebar ----------------
+# ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
-        # Query-Parameter abfangen
-query_params = st.query_params
-if "nav_choice" in query_params:
-    st.session_state["nav_choice"] = query_params["nav_choice"]
-    # Einmalige Rücksetzung, damit es nicht hängenbleibt
-    st.query_params.clear()
-        # Flag vor ALLEM abfangen
+        # Query-Parameter abfangen (z. B. wenn User auf den Footer-Link klickt)
+        query_params = st.query_params
+        if "nav_choice" in query_params:
+            st.session_state["nav_choice"] = query_params["nav_choice"]
+            # Query-Parameter danach löschen, um Endlosschleifen zu vermeiden
+            st.query_params.clear()
+
+        # Flag für direkten Profilwechsel abfangen
         if st.session_state.get("go_profile"):
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
 
+        # Header
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
+        # Navigation
         display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
 
-        # Radio direkt an nav_choice binden
         st.radio(
             "Navigation",
             display_pages,
@@ -136,9 +137,12 @@ if "nav_choice" in query_params:
         )
 
         st.divider()
+
+        # Logout
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
+        # Footer unten links anzeigen
         fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
