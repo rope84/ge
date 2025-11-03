@@ -10,7 +10,7 @@ from typing import Optional, List
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title, metric_card
 from core.auth import change_password
-from core.config import APP_VERSION   # <-- zentrale Versionsverwaltung
+from core.config import APP_NAME, APP_VERSION   # <-- zentrale Versionsverwaltung
 
 # ---- Default-Änderungsnotizen
 DEFAULT_CHANGELOG_NOTES = {
