@@ -108,7 +108,7 @@ def _guess_group(name: str) -> Optional[str]:
         return "schaumwein"
     if "wein" in n or "merlot" in n or "riesling" in n:
         return "wein"
-    if "bier" in n, or "radler" in n or "ipa" in n or "stout" in n:
+    if "bier" in n or "radler" in n or "ipa" in n or "stout" in n:
         return "bier"
     if any(k in n for k in ["wasser", "cola", "sprite", "almdudler", "saft", "juice", "ice tea", "eistee", "tonic", "soda"]):
         return "alkoholfrei"
