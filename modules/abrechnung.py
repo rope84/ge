@@ -2,6 +2,7 @@
 import streamlit as st
 from datetime import date
 from core.ui_theme import page_header, section_title, metric_card
+from core.config import APP_NAME, APP_VERSION
 
 
 # -----------------------------------------------
