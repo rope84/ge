@@ -37,6 +37,7 @@ def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
+        # --- Basistabellen anlegen (falls nicht vorhanden) ---
         tables_sql = {
             "users": """
                 CREATE TABLE IF NOT EXISTS users (
@@ -82,43 +83,81 @@ def _ensure_tables():
                     note TEXT NOT NULL
                 )
             """,
-            # normalisierte Artikeltabelle
-            "inventur_items": """
+        }
+        for name, sql in tables_sql.items():
+            c.execute(sql)
+
+        # --- inventur_items: neu anlegen oder migrieren ---
+        expected_cols = {
+            "id": "INTEGER",
+            "name": "TEXT",
+            "unit_amount": "REAL",
+            "unit": "TEXT",
+            "purchase_price": "REAL",
+            "stock_qty": "REAL",
+            "last_updated": "TEXT",
+        }
+
+        if not _table_exists(c, "inventur_items"):
+            # Frisch anlegen
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS inventur_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
-                    unit_amount REAL,          -- z.B. 0.2
-                    unit TEXT,                 -- z.B. 'l', 'cl', 'ml'
+                    unit_amount REAL,
+                    unit TEXT,
                     purchase_price REAL NOT NULL DEFAULT 0,
                     stock_qty REAL NOT NULL DEFAULT 0,
                     last_updated TEXT
                 )
-            """,
-            # optionale Summen/Infos
-            "umsatz": """
-                CREATE TABLE IF NOT EXISTS umsatz (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    amount REAL NOT NULL DEFAULT 0
-                )
-            """,
-            "inventur": """
-                CREATE TABLE IF NOT EXISTS inventur (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL
-                )
-            """
-        }
+            """)
+        else:
+            # Migrieren: fehlende Spalten ergänzen
+            cols = c.execute("PRAGMA table_info(inventur_items)").fetchall()
+            existing = {row[1] for row in cols}  # row[1] = name
+            # fehlende Spalten addieren
+            if "name" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN name TEXT")
+            if "unit_amount" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN unit_amount REAL")
+            if "unit" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN unit TEXT")
+            if "purchase_price" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0")
+            if "stock_qty" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN stock_qty REAL NOT NULL DEFAULT 0")
+            if "last_updated" not in existing:
+                c.execute("ALTER TABLE inventur_items ADD COLUMN last_updated TEXT")
+            # Falls "name" NULL ist (durch ADD COLUMN), optional initial auffüllen:
+            # (hier keine Zwangswerte setzen – Import/Editor übernimmt das)
 
-        for name, sql in tables_sql.items():
-            if not _table_exists(c, name):
-                c.execute(sql)
-
-        # Unique-Index auf (name, unit_amount, unit) für Upsert-Logik
+        # --- optionale Hilfstabellen (falls genutzt) ---
         c.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_inventur_items_unique
-            ON inventur_items(name, unit_amount, unit)
+            CREATE TABLE IF NOT EXISTS umsatz (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0
+            )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS inventur (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # --- Unique-Index für (name, unit_amount, unit) nur wenn Spalten vorhanden ---
+        try:
+            cols = c.execute("PRAGMA table_info(inventur_items)").fetchall()
+            existing = {row[1] for row in cols}
+            if {"name", "unit_amount", "unit"}.issubset(existing):
+                c.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_inventur_items_unique
+                    ON inventur_items(name, unit_amount, unit)
+                """)
+        except Exception:
+            # Wenn das auf alten Schemas fehlschlägt, nicht hart abbrechen
+            pass
 
         cn.commit()
 
