@@ -6,8 +6,8 @@ import pandas as pd
 import streamlit as st
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from db import conn
-from ui_theme import page_header, section_title, metric_card
+from core.db import conn
+from core.ui_theme import page_header, section_title, metric_card
 
 EXCEL_PATH = "versuch3.xlsx"
 EXPORT_DIR = "exports"
