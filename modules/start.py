@@ -43,18 +43,18 @@ def render_start(username: str):
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("💰 Abrechnung öffnen", use_container_width=True):
-            st.session_state["nav_choice"] = "Abrechnung"
-            st.rerun()
+    st.session_state["nav_to"] = "Abrechnung"
+    st.rerun()
 
     with col2:
         if st.button("📦 Inventur starten", use_container_width=True):
-            st.session_state["nav_choice"] = "Inventur"
-            st.rerun()
+    st.session_state["nav_to"] = "Inventur"
+    st.rerun()
 
     with col3:
         if st.button("📊 Dashboard ansehen", use_container_width=True):
-            st.session_state["nav_choice"] = "Dashboard"
-            st.rerun()
+    st.session_state["nav_to"] = "Dashboard"
+    st.rerun()
 
     st.divider()
 
