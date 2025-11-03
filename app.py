@@ -15,6 +15,7 @@ setup_db()
 seed_admin_if_empty()
 
 # ---------------- Dynamic Module Import ----------------
+# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors = {}, {}
 
@@ -27,12 +28,10 @@ def import_modules():
             modules[name] = None
             errors[name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
-        try_import(f"modules.{mod_name}")
+    for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
+        try_import(f"modules.{mod_name}")  # <- angepasst für neue Ordnerstruktur
 
     return modules, errors
-
-modules, import_errors = import_modules()
 
 # ---------------- Session Init ----------------
 def init_session():
