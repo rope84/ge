@@ -707,47 +707,61 @@ def _render_backup_admin():
 
 # ---------------- Haupt-Render ----------------
 def render_admin():
-    """Entry-Point fürs Admin-Cockpit (von app.py aufgerufen)."""
+    """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
+    # 1) Zugriffsschutz
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
 
+    # 2) Basis-Hooks
     _ensure_tables()
     _ensure_version_logged()
 
+    # 3) Kopf
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
+    # 4) Tabs – Reihenfolge unverändert + neuer Tab „📦 Daten“
     tabs = st.tabs([
-        "🏠 Übersicht",
-        "🏢 Betrieb",
-        "👤 Benutzer",
-        "🧍 Mitarbeiter",
-        "💰 Fixkosten",
-        "🗂️ Datenbank",
-        "📦 Daten",        # 👉 Neuer Tab für Artikelimport
-        "💾 Backups",
+        "🏠 Übersicht",     # 0
+        "🏢 Betrieb",       # 1
+        "👤 Benutzer",      # 2
+        "🧍 Mitarbeiter",   # 3
+        "💰 Fixkosten",     # 4
+        "🗂️ Datenbank",     # 5
+        "📦 Daten",         # 6  <-- NEU: Import/Kategorien
+        "💾 Backups"        # 7
     ])
 
+    # 5) Inhalte je Tab
     with tabs[0]:
         _render_home()
+
     with tabs[1]:
         _render_business_admin()
+
     with tabs[2]:
         _render_user_admin()
+
     with tabs[3]:
         _render_employee_admin()
+
     with tabs[4]:
         _render_fixcost_admin()
+
     with tabs[5]:
         _render_db_overview()
+
+    # Neuer „Daten“-Tab: Import & Kategorien-Tool laden
     with tabs[6]:
-    try:
-        from modules.import_items import render_data_tools
-        render_data_tools()
-    except Exception as e:
-        st.error(f"Fehler beim Laden des Import-Tools: {e}")
+        try:
+            from modules.import_items import render_data_tools
+            render_data_tools()
+        except Exception as e:
+            st.error(f"Fehler beim Laden des Import-Tools: {e}")
+
     with tabs[7]:
         _render_backup_admin()
-    
+
+    # 6) Footer
     st.markdown("---")
     st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
