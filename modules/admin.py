@@ -724,6 +724,7 @@ def render_admin():
         "🧍 Mitarbeiter",
         "💰 Fixkosten",
         "🗂️ Datenbank",
+        "📦 Daten",        # 👉 Neuer Tab für Artikelimport
         "💾 Backups",
     ])
 
@@ -739,13 +740,13 @@ def render_admin():
         _render_fixcost_admin()
     with tabs[5]:
         _render_db_overview()
-        # Optional: Import-UI hier anhängen
+    with tabs[6]:
         try:
             from modules import import_items
             import_items.render_import_items()
         except Exception as e:
-            st.caption(f"Import-Tool nicht verfügbar: {e}")
-    with tabs[6]:
+            st.error(f"Fehler beim Laden des Import-Tools: {e}")
+    with tabs[7]:
         _render_backup_admin()
     
     st.markdown("---")
