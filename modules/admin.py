@@ -1,15 +1,19 @@
 # admin.py
 import streamlit as st
 import pandas as pd
-import shutil, time, datetime
+import shutil
+import time
+import datetime
 from pathlib import Path
+from typing import Optional, List
+
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title, metric_card
-from core.config import APP_VERSION
+from core.auth import change_password  # zentral importiert (keine try/except-Hacks)
 
 APP_VERSION = "Gastro Essentials – Beta 1"
 
-# ---- Default-Änderungsnotizen pro Version (automatisch verwendet bei Version-Wechsel)
+# ---- Default-Änderungsnotizen pro Version
 DEFAULT_CHANGELOG_NOTES = {
     "Gastro Essentials – Beta 1": [
         "Neues einheitliches UI-Theme & aufgeräumte Navigation",
@@ -33,6 +37,20 @@ def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
+        # users (robuster: hier anlegen; seed_admin_if_empty kümmert sich um Inhalte)
+        if not _table_exists(c, "users"):
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username    TEXT NOT NULL UNIQUE,
+                    role        TEXT NOT NULL,
+                    email       TEXT,
+                    first_name  TEXT,
+                    last_name   TEXT,
+                    passhash    TEXT NOT NULL DEFAULT ''
+                )
+            """)
+
         # employees
         if not _table_exists(c, "employees"):
             c.execute("""
@@ -51,9 +69,9 @@ def _ensure_tables():
             c.execute("""
                 CREATE TABLE IF NOT EXISTS fixcosts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name    TEXT NOT NULL,
-                    amount  REAL NOT NULL DEFAULT 0,
-                    note    TEXT,
+                    name      TEXT NOT NULL,
+                    amount    REAL NOT NULL DEFAULT 0,
+                    note      TEXT,
                     is_active INTEGER NOT NULL DEFAULT 1
                 )
             """)
@@ -62,7 +80,7 @@ def _ensure_tables():
         if not _table_exists(c, "meta"):
             c.execute("""
                 CREATE TABLE IF NOT EXISTS meta (
-                    key TEXT PRIMARY KEY,
+                    key   TEXT PRIMARY KEY,
                     value TEXT
                 )
             """)
@@ -73,14 +91,14 @@ def _ensure_tables():
                 CREATE TABLE IF NOT EXISTS changelog (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    note TEXT NOT NULL
+                    version    TEXT NOT NULL,
+                    note       TEXT NOT NULL
                 )
             """)
 
         cn.commit()
 
-def _get_meta(key: str) -> str | None:
+def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
         c = cn.cursor()
         row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -92,13 +110,14 @@ def _set_meta(key: str, value: str):
         c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
         cn.commit()
 
-def _insert_changelog(version: str, notes: list[str]):
-    now = datetime.datetime.now().isoformat()
+def _insert_changelog(version: str, notes: List[str]):
+    now = datetime.datetime.now().isoformat(timespec="seconds")
     with conn() as cn:
         c = cn.cursor()
         rows = [(now, version, note) for note in notes]
         c.executemany(
-            "INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)", rows
+            "INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)",
+            rows
         )
         cn.commit()
 
@@ -113,10 +132,12 @@ def _ensure_version_logged():
 # ------------------- Backups -------------------
 def _list_backups():
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(BACKUP_DIR.glob("*.bak_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(BACKUP_DIR.glob("*.bak_*"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
     return files
 
 def _restore_backup(file_path: Path):
+    """Backup wiederherstellen; vorher aktuelle DB sichern."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts = int(time.time())
     safe = BACKUP_DIR / f"pre_restore_{ts}.bak"
@@ -125,6 +146,14 @@ def _restore_backup(file_path: Path):
     except Exception:
         pass
     shutil.copy(file_path, DB_PATH)
+
+def _create_backup() -> Path:
+    """Manuelles Backup erzeugen."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = BACKUP_DIR / f"{DB_PATH.name}.bak_{ts}"
+    shutil.copy(DB_PATH, target)
+    return target
 
 # ------------------- Zähler -------------------
 def _count_rows(table: str) -> int:
@@ -136,19 +165,15 @@ def _count_rows(table: str) -> int:
 
 # ------------------- Admin-Startseite -------------------
 def _render_home():
-    # 1) Klarer Header oben
+    # Header + Intro
     page_header("Admin-Cockpit", "System- und Datenübersicht")
-
-    # 2) Navigation wird in render_admin als Tabs erzeugt (kommt direkt nach diesem Header)
-
-    # 3) Direkt unterhalb der Tabs (im ersten Tab) kommt der Willkommensblock:
     section_title("Willkommen")
     st.markdown(
         "Willkommen im **Gastro Essentials Admin-Cockpit**. "
         "Hier verwaltest du Benutzer, Mitarbeiter, Fixkosten, Datenbanken und Backups."
     )
 
-    # 4) Schöne KPI-Ansicht (zweizeilig)
+    # KPIs
     section_title("Systemstatus")
     a1, a2, a3 = st.columns(3)
     b1, b2, b3 = st.columns(3)
@@ -175,7 +200,6 @@ def _render_home():
     if df.empty:
         st.info("Noch keine Changelog-Einträge vorhanden.")
     else:
-        # kompakte Darstellung
         for _, r in df.iterrows():
             st.markdown(f"- **{r['version']}** · {r['created_at'][:16]} — {r['note']}")
 
@@ -183,16 +207,16 @@ def _render_home():
 
 # ------------------- Haupt-Render -------------------
 def render_admin():
+    # Guard – doppelt hält besser
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
-    _ensure_tables()
-    _ensure_version_logged()  # <-- sorgt für automatische Changelog-Einträge bei Versionswechsel
 
-    # Header & Untertitel GANZ OBEN:
+    _ensure_tables()
+    _ensure_version_logged()
+
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    # Danach direkt die Navigation (Tabs):
     tabs = st.tabs([
         "🏠 Übersicht",
         "👤 Benutzer",
@@ -204,17 +228,11 @@ def render_admin():
 
     # ------------------- TAB 1: START/ÜBERSICHT -------------------
     with tabs[0]:
-        # Unterhalb der Navigation: Willkommensblock + KPIs + Changelog
         _render_home()
 
     # ------------------- TAB 2: BENUTZER -------------------
     with tabs[1]:
         section_title("👤 Benutzerverwaltung")
-        # Passwort-Funktion optional aus auth
-        try:
-            from core.auth import change_password
-        except Exception:
-            change_password = None
 
         with st.form("add_user_form"):
             c1, c2, c3 = st.columns([1, 1, 1])
@@ -232,17 +250,17 @@ def render_admin():
                     try:
                         with conn() as cn:
                             c = cn.cursor()
-                            c.execute("""INSERT INTO users(username, role, email, first_name, last_name, passhash)
-                                         VALUES(?,?,?,?,?, '')""",
-                                      (new_user, new_role, new_mail, new_first, new_last))
+                            c.execute(
+                                """INSERT INTO users(username, role, email, first_name, last_name, passhash)
+                                   VALUES(?,?,?,?,?, '')""",
+                                (new_user, new_role, new_mail, new_first, new_last)
+                            )
                             cn.commit()
-                        if change_password:
-                            ok = change_password(new_user, new_pw)
-                            if not ok:
-                                st.warning("Benutzer angelegt, aber Passwort konnte nicht gesetzt werden.")
+                        ok = change_password(new_user, new_pw)
+                        if ok:
+                            st.success(f"✅ Benutzer '{new_user}' angelegt & Passwort gesetzt.")
                         else:
-                            st.info("Passwort-Setzen via Admin derzeit nicht verfügbar.")
-                        st.success(f"✅ Benutzer '{new_user}' angelegt.")
+                            st.warning(f"Benutzer '{new_user}' angelegt. ⚠️ Passwort konnte nicht gesetzt werden.")
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
@@ -270,10 +288,14 @@ def render_admin():
                         try:
                             with conn() as cn:
                                 c = cn.cursor()
-                                c.execute("""UPDATE users SET first_name=?, last_name=?, email=?, role=? WHERE id=?""",
-                                          (e_first, e_last, e_mail, e_role, uid))
+                                c.execute(
+                                    """UPDATE users
+                                       SET first_name=?, last_name=?, email=?, role=?
+                                       WHERE id=?""",
+                                    (e_first, e_last, e_mail, e_role, uid)
+                                )
                                 cn.commit()
-                            if new_pw and change_password:
+                            if new_pw:
                                 ok = change_password(uname, new_pw)
                                 st.success("Profil & Passwort gespeichert." if ok else "Profil gespeichert, Passwort fehlgeschlagen.")
                             else:
@@ -304,9 +326,11 @@ def render_admin():
                 else:
                     with conn() as cn:
                         c = cn.cursor()
-                        c.execute("""INSERT INTO employees(name, contract, hourly, is_barlead, bar_no)
-                                     VALUES(?,?,?,?,?)""",
-                                  (ename, econtract, ehourly, int(ebarlead), ebarno))
+                        c.execute(
+                            """INSERT INTO employees(name, contract, hourly, is_barlead, bar_no)
+                               VALUES(?,?,?,?,?)""",
+                            (ename, econtract, ehourly, int(ebarlead), ebarno)
+                        )
                         cn.commit()
                     st.success(f"✅ Mitarbeiter '{ename}' angelegt.")
 
@@ -330,8 +354,12 @@ def render_admin():
                     if s1.button("💾 Speichern", key=f"e_save_{eid}"):
                         with conn() as cn:
                             c = cn.cursor()
-                            c.execute("""UPDATE employees SET name=?, contract=?, hourly=?, is_barlead=?, bar_no=? WHERE id=?""",
-                                      (e_name, e_con, float(e_hour), int(e_lead), int(e_bno), eid))
+                            c.execute(
+                                """UPDATE employees
+                                   SET name=?, contract=?, hourly=?, is_barlead=?, bar_no=?
+                                   WHERE id=?""",
+                                (e_name, e_con, float(e_hour), int(e_lead), int(e_bno), eid)
+                            )
                             cn.commit()
                         st.success("Gespeichert.")
                     if s2.button("🗑️ Löschen", key=f"e_del_{eid}"):
@@ -358,16 +386,20 @@ def render_admin():
                 else:
                     with conn() as cn:
                         c = cn.cursor()
-                        c.execute("""INSERT INTO fixcosts(name, amount, note, is_active)
-                                     VALUES(?,?,?,?)""",
-                                  (fc_name, float(fc_amount), fc_note, int(fc_active)))
+                        c.execute(
+                            """INSERT INTO fixcosts(name, amount, note, is_active)
+                               VALUES(?,?,?,?)""",
+                            (fc_name, float(fc_amount), fc_note, int(fc_active))
+                        )
                         cn.commit()
                     st.success("Fixkosten hinzugefügt.")
 
         st.divider()
         with conn() as cn:
             c = cn.cursor()
-            rows = c.execute("SELECT id, name, amount, note, is_active FROM fixcosts ORDER BY id").fetchall()
+            rows = c.execute(
+                "SELECT id, name, amount, note, is_active FROM fixcosts ORDER BY is_active DESC, id"
+            ).fetchall()
         if not rows:
             st.info("Noch keine Fixkosten erfasst.")
         else:
@@ -383,8 +415,10 @@ def render_admin():
                     if s1.button("💾 Speichern", key=f"fc_save_{fid}"):
                         with conn() as cn:
                             c = cn.cursor()
-                            c.execute("""UPDATE fixcosts SET name=?, amount=?, note=?, is_active=? WHERE id=?""",
-                                      (e_name, float(e_amount), e_note, int(e_active), fid))
+                            c.execute(
+                                """UPDATE fixcosts SET name=?, amount=?, note=?, is_active=? WHERE id=?""",
+                                (e_name, float(e_amount), e_note, int(e_active), fid)
+                            )
                             cn.commit()
                         st.success("Gespeichert.")
                     if s2.button("🗑️ Löschen", key=f"fc_del_{fid}"):
@@ -423,7 +457,7 @@ def render_admin():
                     with conn() as cn:
                         df = pd.read_sql(f"SELECT * FROM {tname}", cn)
                     st.dataframe(df, use_container_width=True, height=420)
-                    csv = df.to_csv(index=False).encode("utf-8")
+                    csv = df.to_csv(index=False).encode("utf-8-sig")
                     st.download_button(
                         "CSV exportieren",
                         csv,
@@ -435,6 +469,11 @@ def render_admin():
     # ------------------- TAB 6: BACKUPS -------------------
     with tabs[5]:
         section_title("💾 Datenbank-Backups")
+        col_a, col_b = st.columns([1, 1])
+        if col_a.button("🧷 Backup jetzt erstellen", use_container_width=True):
+            created = _create_backup()
+            st.success(f"Backup erstellt: {created.name}")
+
         backups = _list_backups()
         if not backups:
             st.info("Keine Backups gefunden.")
@@ -445,7 +484,7 @@ def render_admin():
             st.write(f"📅 {time.ctime(chosen.stat().st_mtime)}")
             st.write(f"📁 {chosen}")
             ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.")
-            if st.button("🔄 Backup wiederherstellen", disabled=not ok, use_container_width=True):
+            if col_b.button("🔄 Backup wiederherstellen", disabled=not ok, use_container_width=True):
                 with st.spinner("Backup wird wiederhergestellt..."):
                     _restore_backup(chosen)
                     time.sleep(1.0)
