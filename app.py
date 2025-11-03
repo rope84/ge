@@ -139,8 +139,13 @@ def sidebar():
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
 
-        choice_display = st.radio("Navigation", display_pages, label_visibility="collapsed")
-        st.session_state.nav_choice = choice_display
+        st.radio(
+    "Navigation",
+    display_pages,
+    index=display_pages.index(st.session_state.get("nav_choice", "Start")),
+    label_visibility="collapsed",
+    key="nav_choice",   # <— bindet das Radio direkt an den Session-State
+)
 
         st.divider()
         if st.session_state.auth and st.button("Logout", use_container_width=True):
