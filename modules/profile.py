@@ -1,9 +1,9 @@
 # profile.py
 import re
 import streamlit as st
-from ui_theme import page_header, section_title
-from auth import change_password
-from db import conn
+from core.ui_theme import page_header, section_title
+from core.auth import change_password
+from core.db import conn
 
 
 # -------------------------------
