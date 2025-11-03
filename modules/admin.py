@@ -5,6 +5,7 @@ import shutil, time, datetime
 from pathlib import Path
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title, metric_card
+from core.config import APP_VERSION
 
 APP_VERSION = "Gastro Essentials – Beta 1"
 
