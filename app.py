@@ -70,7 +70,6 @@ def login_screen():
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
 
-    # CSS Styling für Sidebar-Bereich
     st.markdown(
         """
         <style>
@@ -85,21 +84,27 @@ def fixed_footer():
             opacity: 0.85;
             line-height: 1.4em;
         }
-        .footer-button {
-            background: none;
-            border: none;
-            color: #bbb;
-            font-weight: bold;
-            text-decoration: none;
-            cursor: pointer;
-            padding: 0;
-            margin: 0;
-        }
-        .footer-button:hover {
-            color: white;
-            text-decoration: underline;
-        }
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Button wie Link – setzt nur einen Flag, NICHT nav_choice direkt!
+    if st.button(
+        f"👤 {st.session_state.get('username', 'Gast')}",
+        key="footer_user",
+        help="Profil öffnen",
+        use_container_width=False,
+    ):
+        st.session_state["go_profile"] = True
+        st.rerun()
+
+    st.markdown(
+        f"""
+        <div class="footer">
+            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+        </div>
         """,
         unsafe_allow_html=True,
     )
