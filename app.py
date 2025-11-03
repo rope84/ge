@@ -61,7 +61,7 @@ def login_screen():
         if ok:
             st.session_state.auth = True
             st.session_state.username = u
-            st.session_state.role = "admin" if u == "oklub" else (st.session_state.get("role") or "user")
+            st.session_state.role = "admin" if u == "username" else (st.session_state.get("role") or "user")
             st.rerun()
         else:
             st.error("❌ Falscher Benutzername oder Passwort")
@@ -84,10 +84,14 @@ def sidebar():
             logout()
 
         small_footer(
-            f"Eingeloggt als: <b>{st.session_state.username or 'Gast'}</b><br>"
-            f"Rolle: <b>{st.session_state.role}</b><br>"
-            f"{APP_NAME} – {APP_VERSION}"
-        )
+    f"""
+    <div style='text-align:center; font-size:12px; color:gray; line-height:1.4em;'>
+        👤 <b>{st.session_state.username or 'Gast'}</b> · 
+        🧭 <span style='opacity:0.8'>{st.session_state.role}</span><br>
+        <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+    </div>
+    """
+)
 
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
