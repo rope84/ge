@@ -4,12 +4,13 @@ import shutil
 import time
 import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.config import APP_NAME, APP_VERSION
+
 
 # ---------------- Änderungsnotizen (Default) ----------------
 DEFAULT_CHANGELOG_NOTES = {
@@ -23,12 +24,14 @@ DEFAULT_CHANGELOG_NOTES = {
     ]
 }
 
+
 # ---------------- Hilfsfunktionen / DB ----------------
 def _table_exists(c, name: str) -> bool:
     return c.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
         (name,)
     ).fetchone() is not None
+
 
 def _ensure_tables():
     with conn() as cn:
@@ -86,17 +89,20 @@ def _ensure_tables():
                 c.execute(sql)
         cn.commit()
 
+
 def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
         c = cn.cursor()
         row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
+
 def _set_meta(key: str, value: str):
     with conn() as cn:
         c = cn.cursor()
         c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
         cn.commit()
+
 
 def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
     with conn() as cn:
@@ -107,12 +113,14 @@ def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
             out[k] = r[0] if r else None
         return out
 
+
 def _set_meta_many(data: Dict[str, str]):
     with conn() as cn:
         c = cn.cursor()
         for k, v in data.items():
             c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (k, v))
         cn.commit()
+
 
 def _insert_changelog(version: str, notes: List[str]):
     now = datetime.datetime.now().isoformat(timespec="seconds")
@@ -122,12 +130,14 @@ def _insert_changelog(version: str, notes: List[str]):
         c.executemany("INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)", rows)
         cn.commit()
 
+
 def _ensure_version_logged():
     last = _get_meta("last_seen_version")
     if last != APP_VERSION:
         notes = DEFAULT_CHANGELOG_NOTES.get(APP_VERSION, [f"Update auf {APP_VERSION}"])
         _insert_changelog(APP_VERSION, notes)
         _set_meta("last_seen_version", APP_VERSION)
+
 
 def _count_rows(table: str) -> int:
     with conn() as cn:
@@ -136,14 +146,17 @@ def _count_rows(table: str) -> int:
             return 0
         return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
+
 # ---------------- Backups (manuell, BCK_YYYYMMDD_HHMMSS.bak) ----------------
 def _list_backups() -> List[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     return sorted(BACKUP_DIR.glob("BCK_*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
 
+
 def _last_backup_time() -> Optional[datetime.datetime]:
     files = _list_backups()
     return datetime.datetime.fromtimestamp(max(files, key=lambda f: f.stat().st_mtime).stat().st_mtime) if files else None
+
 
 def _create_backup() -> Optional[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,13 +165,16 @@ def _create_backup() -> Optional[Path]:
     shutil.copy(DB_PATH, target)
     return target
 
+
 def _restore_backup(file_path: Path):
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy(DB_PATH, BACKUP_DIR / f"pre_restore_{int(time.time())}.bak")
     shutil.copy(file_path, DB_PATH)
 
+
 def _format_size(bytes_: int) -> str:
     return f"{bytes_ / (1024 * 1024):.1f} MB"
+
 
 def _db_size_mb() -> float:
     try:
@@ -166,8 +182,9 @@ def _db_size_mb() -> float:
     except Exception:
         return 0.0
 
-def _db_table_stats() -> tuple[int, int]:
-    """Anzahl Tabellen und Gesamtzeilen über alle Tabellen."""
+
+def _db_table_stats() -> Tuple[int, int]:
+    """Anzahl Tabellen und Gesamtzeilen über alle Tabellen (ohne sqlite_ interne)."""
     with conn() as cn:
         c = cn.cursor()
         tables = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
@@ -180,6 +197,7 @@ def _db_table_stats() -> tuple[int, int]:
                 pass
         return len(table_names), total_rows
 
+
 # ---------------- UI Helpers ----------------
 def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
     if days is None:
@@ -190,15 +208,32 @@ def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
         return ("#f59e0b", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
     return ("#ef4444", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
 
-def _small_status_card(title: str, color: str, lines: List[str]) -> str:
+
+def _card_html(title: str, color: str, lines: List[str]) -> str:
+    """
+    Hübsche, kompakte Statuskarte mit Schatten & Gradient-Akzent links.
+    """
     body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
     return f"""
-    <div style="display:flex; gap:10px; align-items:flex-start;
-        background:rgba(255,255,255,0.03); padding:10px 12px; border-radius:10px;">
-      <span style='display:inline-block; width:10px; height:10px; border-radius:50%; margin-top:4px; background:{color};'></span>
-      <div style='font-size:13px;'><b>{title}</b><br/>{body}</div>
+    <div style="
+        display:flex; gap:12px; align-items:flex-start;
+        padding:12px 14px; border-radius:14px;
+        background:rgba(255,255,255,0.03);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+        position:relative; overflow:hidden;
+    ">
+      <div style="
+        position:absolute; left:0; top:0; bottom:0; width:6px;
+        background: linear-gradient(180deg, {color}, {color}55);
+        border-top-left-radius:14px; border-bottom-left-radius:14px;
+      "></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:{color}; margin-top:4px;"></div>
+      <div style="font-size:13px;">
+        <b>{title}</b><br/>{body}
+      </div>
     </div>
     """
+
 
 def _role_badge(role: str) -> str:
     colors = {
@@ -210,8 +245,10 @@ def _role_badge(role: str) -> str:
     color = colors.get(role, "#6b7280")
     return f"<span style='background:{color}; color:white; padding:2px 6px; border-radius:999px; font-size:11px;'>{role}</span>"
 
+
 def _pill(text: str, color: str = "#10b981") -> str:
     return f"<span style='background:{color}22; color:{color}; padding:2px 6px; border:1px solid {color}55; border-radius:999px; font-size:11px;'>{text}</span>"
+
 
 # ---------------- Übersicht ----------------
 def _render_home():
@@ -224,70 +261,129 @@ def _render_home():
 
     last_bkp_dt = _last_backup_time()
     days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
-    color, label, tip = _status_badge_from_days(days_since)
+    bkp_color, bkp_label, bkp_tip = _status_badge_from_days(days_since)
 
     db_size = _db_size_mb()
     num_tables, total_rows = _db_table_stats()
 
+    # Betriebsdaten (fehlende Tabellen werden abgefangen)
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            # letzte Inventur (falls Tabelle existiert)
+            last_inv = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()[0] if _table_exists(c, "inventur") else None
+            # Artikelanzahl
+            artikel_count = c.execute("SELECT COUNT(*) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
+            # Wareneinsatz (%)
+            einkauf_total = c.execute("SELECT SUM(purchase_price) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
+            einkauf_total = einkauf_total or 0
+            umsatz_total  = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()[0] if _table_exists(c, "umsatz") else 0
+            umsatz_total  = umsatz_total or 0
+    except Exception:
+        last_inv = None
+        artikel_count = 0
+        einkauf_total = 0
+        umsatz_total  = 0
+
+    wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
+    last_inv_str = "—"
+    if last_inv:
+        try:
+            last_inv_str = datetime.datetime.fromisoformat(last_inv).strftime("%d.%m.%Y")
+        except Exception:
+            # falls created_at kein ISO-Format ist
+            try:
+                last_inv_str = datetime.datetime.strptime(last_inv, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+            except Exception:
+                last_inv_str = str(last_inv)
+
     # Systemhinweise
-    issues = []
+    system_issues = []
     if users_cnt == 0:
-        issues.append("Keine Benutzer angelegt.")
+        system_issues.append("Keine Benutzer angelegt.")
     if emp_cnt == 0:
-        issues.append("Keine Mitarbeiter angelegt.")
-    if color in ("#f59e0b", "#ef4444"):
-        issues.append(tip)
+        system_issues.append("Keine Mitarbeiter angelegt.")
 
-    left, right = st.columns(2, gap="large")
+    system_color = "#22c55e" if not system_issues else "#f59e0b"
 
-    with left:
+    # 4 Karten nebeneinander
+    c1, c2, c3, c4 = st.columns(4, gap="large")
+
+    # 1) Systemstatus
+    with c1:
         today_str = datetime.date.today().strftime("%d.%m.%Y")
-        html = _small_status_card(
-            "Systemstatus",
-            "#22c55e" if not issues else "#f59e0b" if any("empfohlen" in x for x in issues) else "#ef4444",
-            [
-                f"Prüfung: {today_str}",
-                f"Benutzer: {users_cnt}",
-                f"Mitarbeiter: {emp_cnt}",
-                f"Fixkosten: {fix_cnt}",
-            ]
+        st.markdown(
+            _card_html(
+                "Systemstatus",
+                system_color,
+                [
+                    f"Prüfung: {today_str}",
+                    f"Benutzer: {users_cnt}",
+                    f"Mitarbeiter: {emp_cnt}",
+                    f"Fixkosten: {fix_cnt}",
+                ],
+            ),
+            unsafe_allow_html=True,
         )
-        st.markdown(html, unsafe_allow_html=True)
 
-    with right:
+    # 2) Backupstatus
+    with c2:
         last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
-        html_b = _small_status_card(
-            "Backupstatus",
-            color,
-            [
-                f"Status: {label}",
-                f"Info: {tip}",
-                f"Letztes Backup: {last_text}",
-                f"Backups gesamt: {total_backups}",
-            ]
+        st.markdown(
+            _card_html(
+                "Backupstatus",
+                bkp_color,
+                [
+                    f"Status: {bkp_label}",
+                    f"Letztes Backup: {last_text}",
+                    f"Backups gesamt: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
         )
-        st.markdown(html_b, unsafe_allow_html=True)
 
-    # Details nur bei Warnungen/Fehlern sichtbar
-    if issues:
-        with st.expander("🔍 Systemhinweise öffnen", expanded=False):
-            for issue in issues:
+    # 3) Datenbankstatus
+    with c3:
+        st.markdown(
+            _card_html(
+                "Datenbank",
+                "#3b82f6",
+                [
+                    f"Größe: {db_size} MB",
+                    f"Tabellen: {num_tables}",
+                    f"Zeilen: {total_rows}",
+                    f"Backups: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # 4) Betriebsstatus
+    with c4:
+        st.markdown(
+            _card_html(
+                "Betriebsstatus",
+                "#f97316",
+                [
+                    f"Letzte Inventur: {last_inv_str}",
+                    f"Artikel: {artikel_count}",
+                    f"Fixkosten: {fix_cnt}",
+                    f"Personalstand: {emp_cnt}",
+                    f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # Details nur bei Bedarf
+    if system_issues:
+        with st.expander("🔍 Systemhinweise anzeigen", expanded=False):
+            for issue in system_issues:
                 st.markdown(f"- {issue}")
-    else:
-        st.caption("🟢 Keine Systemhinweise")
 
-    st.divider()
-
-    # --- Datenbank Block ---
-    section_title("🗂️ Datenbankstatus")
-    db_details = [
-        f"📦 Dateigröße: **{db_size} MB**",
-        f"🧩 Tabellen: **{num_tables}**",
-        f"🔢 Gesamtzeilen: **{total_rows}**",
-        f"💾 Backups gesamt: **{total_backups}**",
-    ]
-    for d in db_details:
-        st.markdown(d)
+    if bkp_color in ("#f59e0b", "#ef4444"):
+        with st.expander("🔍 Backup-Hinweise anzeigen", expanded=False):
+            st.markdown(f"- {bkp_tip}")
 
     st.divider()
 
@@ -307,6 +403,7 @@ def _render_home():
                 f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
                 unsafe_allow_html=True
             )
+
 
 # ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
@@ -353,6 +450,7 @@ def _render_business_admin():
                 "business_note": note,
             })
             st.success("Betriebsdaten gespeichert.")
+
 
 # ---------------- Benutzer ----------------
 def _render_user_admin():
@@ -431,6 +529,7 @@ def _render_user_admin():
                     st.warning(f"Benutzer '{uname}' gelöscht.")
                     st.rerun()
 
+
 # ---------------- Mitarbeiter ----------------
 def _render_employee_admin():
     section_title("🧍 Mitarbeiterverwaltung")
@@ -485,6 +584,7 @@ def _render_employee_admin():
                         cn.commit()
                     st.warning(f"Mitarbeiter '{name}' gelöscht.")
                     st.rerun()
+
 
 # ---------------- Fixkosten ----------------
 def _render_fixcost_admin():
@@ -547,6 +647,7 @@ def _render_fixcost_admin():
                     st.warning(f"Fixkosten '{name}' gelöscht.")
                     st.rerun()
 
+
 # ---------------- Datenbank-Übersicht ----------------
 def _render_db_overview():
     section_title("🗂️ Datenbank – Übersicht & Export")
@@ -568,6 +669,7 @@ def _render_db_overview():
 
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
+
 
 # ---------------- Backup-Verwaltung ----------------
 def _render_backup_admin():
@@ -605,6 +707,7 @@ def _render_backup_admin():
             _restore_backup(chosen)
             time.sleep(1.0)
         st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
+
 
 # ---------------- Haupt-Render ----------------
 def render_admin():
