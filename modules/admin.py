@@ -741,11 +741,11 @@ def render_admin():
     with tabs[5]:
         _render_db_overview()
     with tabs[6]:
-        try:
-            from modules import import_items
-            import_items.render_import_items()
-        except Exception as e:
-            st.error(f"Fehler beim Laden des Import-Tools: {e}")
+    try:
+        from modules.import_items import render_data_tools
+        render_data_tools()
+    except Exception as e:
+        st.error(f"Fehler beim Laden des Import-Tools: {e}")
     with tabs[7]:
         _render_backup_admin()
     
