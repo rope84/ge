@@ -1,152 +1,107 @@
-# app.py
+# ui_theme.py
 import streamlit as st
-import traceback
+from base64 import b64encode
+from typing import Tuple, Optional
 
-from db import setup_db
-from auth import seed_admin_if_empty
-from ui_theme import use_theme, page_header, small_footer, render_login_form
+# ===== Branding / Konfiguration =====
+APP_LOGO_URL: Optional[str] = ""  # z.B. "https://…/logo.png" oder leer lassen
+TAGLINE = "Zugang zum O-der Klub Operations Dashboard"
 
-APP_NAME = "Gastro Essentials"
-APP_VERSION = "Beta 1"
+def use_theme():
+    """Globales Styling (nach set_page_config aufrufen)."""
+    st.markdown(
+        """
+        <style>
+        /* Hintergrund */
+        .stApp {
+            background: radial-gradient(1200px 600px at 20% 0%, rgba(255,255,255,0.05), transparent 60%),
+                        linear-gradient(180deg, #0b0b12 0%, #171722 50%, #0b0b12 100%);
+        }
+        /* Karten / Container Look */
+        .ge-card {
+            max-width: 520px;
+            margin: 8vh auto 4vh auto;
+            padding: 28px 26px;
+            background: rgba(255,255,255,0.06);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 18px;
+            box-shadow: 0 14px 36px rgba(0,0,0,0.35);
+        }
+        .ge-title { font-weight: 800; font-size: 1.6rem; letter-spacing: .2px; margin-bottom: 2px; }
+        .ge-sub   { opacity: .9; font-size: .95rem; margin-bottom: 16px; }
+        .ge-muted { opacity: .75; font-size: .85rem; }
+        .ge-center { display:flex; justify-content:center; align-items:center; }
+        .ge-footer { text-align:center; opacity:.65; font-size:.85rem; margin-top: 24px; }
+        .ge-logo { border-radius: 14px; }
+        .ge-pill { display:inline-block; padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.08); font-size:.8rem; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-# ---------------- Initial Setup ----------------
-setup_db()
-seed_admin_if_empty()
+def page_header(title: str, subtitle: str = ""):
+    st.markdown(f"### {title}")
+    if subtitle:
+        st.caption(subtitle)
 
-# ---------------- Dynamic Module Import ----------------
-def import_modules():
-    modules, errors = {}, {}
+def small_footer(html_text: str):
+    st.markdown(f"<div class='ge-footer'>{html_text}</div>", unsafe_allow_html=True)
 
-    def try_import(name):
-        try:
-            mod = __import__(name)
-            fn = getattr(mod, f"render_{name}")
-            modules[name] = fn
-        except Exception as e:
-            modules[name] = None
-            errors[name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
+def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
+    """
+    Zeichnet die Login-Seite und liefert (username, password, pressed).
+    Passt 1:1 zu deinem app.py (login_screen ruft diese Funktion auf).
+    """
+    # Zentriertes Layout ohne Sidebar-Ablenkung
+    st.markdown("<div class='ge-card'>", unsafe_allow_html=True)
 
-    for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
-        try_import(mod_name)
+    # Logo optional
+    if APP_LOGO_URL:
+        st.markdown("<div class='ge-center'>", unsafe_allow_html=True)
+        st.image(APP_LOGO_URL, width=96, use_container_width=False)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    return modules, errors
+    # Titel / Untertitel
+    st.markdown(f"<div class='ge-title ge-center'>{app_name} 🍸</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='ge-sub ge-center'>{TAGLINE}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='ge-center' style='margin-bottom:14px;'>"
+        f"<span class='ge-pill'>Version {app_version}</span>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
 
-modules, import_errors = import_modules()
+    # Formular
+    with st.form("ge_login_form", clear_on_submit=False):
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            username = st.text_input("Benutzername", placeholder="z. B. oklub / roman")
+        with col2:
+            show_pw = st.toggle("Passwort anzeigen", value=False)
 
-# ---------------- Session Init ----------------
-def init_session():
-    s = st.session_state
-    s.setdefault("auth", False)
-    s.setdefault("username", "")
-    s.setdefault("role", "guest")
-    s.setdefault("scope", "")
-    s.setdefault("nav_choice", "Start")
-
-init_session()
-
-# ---------------- Auth ----------------
-def logout():
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
-    init_session()
-    st.rerun()
-
-def login_screen():
-    import auth
-    u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
-    if pressed:
-        ok = getattr(auth, "_do_login")(u, p)
-        if ok:
-            st.session_state.auth = True
-            st.session_state.username = u
-            st.session_state.role = "admin" if u == "oklub" else (st.session_state.get("role") or "user")
-            st.rerun()
-        else:
-            st.error("❌ Falscher Benutzername oder Passwort")
-
-# ---------------- Sidebar ----------------
-def sidebar():
-    with st.sidebar:
-        st.markdown(f"### {APP_NAME}")
-        st.caption(APP_VERSION)
-
-        display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
-        if st.session_state.role == "admin":
-            display_pages.append("Admin-Cockpit")
-
-        choice_display = st.radio("Navigation", display_pages, label_visibility="collapsed")
-        st.session_state.nav_choice = choice_display
-
-        st.divider()
-        if st.session_state.auth and st.button("Logout", use_container_width=True):
-            logout()
-
-        small_footer(
-            f"Eingeloggt als: <b>{st.session_state.username or 'Gast'}</b><br>"
-            f"Rolle: <b>{st.session_state.role}</b><br>"
-            f"{APP_NAME} – {APP_VERSION}"
+        password = st.text_input(
+            "Passwort",
+            type=("default" if show_pw else "password"),
+            placeholder="••••••••"
         )
 
-# ---------------- Routing ----------------
-DISPLAY_TO_MODULE = {
-    "start": "start",
-    "abrechnung": "abrechnung",
-    "dashboard": "dashboard",
-    "inventur": "inventur",
-    "profil": "profile",
-    "admin-cockpit": "admin",
-}
+        # Optional: „Angemeldet bleiben“ als QueryParam-Light
+        remember = st.checkbox("Angemeldet bleiben")
 
-def route():
-    display_key = (st.session_state.get("nav_choice") or "Start").lower()
-    mod_key = DISPLAY_TO_MODULE.get(display_key)
-    if not mod_key:
-        st.error(f"⚠️ Ungültige Seite: {display_key}")
-        return
+        # CTA
+        submitted = st.form_submit_button("Einloggen", use_container_width=True)
 
-    mod_func = modules.get(mod_key)
-    mod_err = import_errors.get(mod_key)
+        # Kleiner Hinweis
+        st.caption("Probleme beim Login? Wende dich an den Admin.")
 
-    if not mod_func:
-        st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
-        st.code(mod_err or "Unbekannter Fehler", language="text")
-        return
+        # Nach dem Submit: remember-Flag in Session parken (app.py kann es verwenden, wenn gewünscht)
+        if submitted:
+            st.session_state["remember_me"] = bool(remember)
 
-    try:
-        if mod_key == "start":
-            mod_func(st.session_state.username or "Gast")
-        elif mod_key == "abrechnung":
-            mod_func(st.session_state.role, st.session_state.scope)
-        elif mod_key == "dashboard":
-            mod_func()
-        elif mod_key == "inventur":
-            try:
-                mod_func(st.session_state.username or "unknown", st.session_state.role or "guest")
-            except TypeError:
-                mod_func(st.session_state.username or "unknown")
-        elif mod_key == "profile":
-            mod_func(st.session_state.username or "")
-        elif mod_key == "admin":
-            if st.session_state.role != "admin":
-                st.error("Kein Zugriff. Adminrechte erforderlich.")
-            else:
-                mod_func()
-        else:
-            st.error(f"Seite nicht implementiert: {mod_key}")
-    except Exception:
-        st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
-        st.code(traceback.format_exc(), language="text")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------- Main ----------------
-def main():
-    st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-    use_theme()  # CSS erst NACH set_page_config
+    # Kleiner rechtlicher/Brand-Footer
+    small_footer("© O-der Klub · Gastro Essentials · Interne Betriebsanwendung")
 
-    if not st.session_state.auth:
-        login_screen()
-    else:
-        sidebar()
-        route()
-
-if __name__ == "__main__":
-    main()
+    return username.strip(), password, submitted
