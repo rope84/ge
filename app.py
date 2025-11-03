@@ -8,6 +8,11 @@ from core import auth
 from core.ui_theme import use_theme, page_header, small_footer
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
+from streamlit_javascript import st_javascript
+
+def go_to_profile():
+    st.session_state["nav_choice"] = "Profil"
+    st.rerun()
 
 # ---------------- Initial Setup ----------------
 setup_db()
@@ -68,11 +73,10 @@ def login_screen():
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
 
-    # Inline-CSS für Positionierung und Stil
     st.markdown(
-        f"""
+        """
         <style>
-        .footer {{
+        .footer {
             position: fixed;
             bottom: 10px;
             left: 12px;
@@ -82,26 +86,55 @@ def fixed_footer():
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
-        }}
-        .footer a {{
+        }
+        .footer-link {
             color: #bbb;
             text-decoration: none;
             font-weight: bold;
-        }}
-        .footer a:hover {{
+            cursor: pointer;
+        }
+        .footer-link:hover {
             color: white;
             text-decoration: underline;
-        }}
+        }
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # "Virtueller" Link – kein Reload!
+    username = st.session_state.get("username", "Gast")
+
+    st.markdown(
+        f"""
         <div class="footer">
-            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
+            👤 <span class="footer-link" id="userlink">{username}</span><br>
             🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+        # Klick-Event: auf Klick warten und "clicked" zurückgeben
+    click = st_javascript(
+        """
+        const el = document.getElementById('userlink');
+        if (!el) {
+            // Element (noch) nicht da -> nichts zurückgeben
+            null;
+        } else {
+            // Warten bis geklickt wird, dann "clicked" an Python zurückgeben
+            await new Promise(resolve => {
+                el.addEventListener('click', () => resolve('clicked'), { once: true });
+            });
+        }
+        """
+    )
+
+    if click == "clicked":
+        st.session_state["nav_choice"] = "Profil"
+        st.rerun()
    
 # ---------------- Sidebar ----------------
 def sidebar():
