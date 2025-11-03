@@ -210,9 +210,6 @@ def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
 
 
 def _card_html(title: str, color: str, lines: List[str]) -> str:
-    """
-    Hübsche, kompakte Statuskarte mit Schatten & Gradient-Akzent links.
-    """
     body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
     return f"""
     <div style="
@@ -266,15 +263,12 @@ def _render_home():
     db_size = _db_size_mb()
     num_tables, total_rows = _db_table_stats()
 
-    # Betriebsdaten (fehlende Tabellen werden abgefangen)
+    # Betriebskennzahlen
     try:
         with conn() as cn:
             c = cn.cursor()
-            # letzte Inventur (falls Tabelle existiert)
             last_inv = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()[0] if _table_exists(c, "inventur") else None
-            # Artikelanzahl
             artikel_count = c.execute("SELECT COUNT(*) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
-            # Wareneinsatz (%)
             einkauf_total = c.execute("SELECT SUM(purchase_price) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
             einkauf_total = einkauf_total or 0
             umsatz_total  = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()[0] if _table_exists(c, "umsatz") else 0
@@ -291,11 +285,14 @@ def _render_home():
         try:
             last_inv_str = datetime.datetime.fromisoformat(last_inv).strftime("%d.%m.%Y")
         except Exception:
-            # falls created_at kein ISO-Format ist
             try:
                 last_inv_str = datetime.datetime.strptime(last_inv, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
             except Exception:
                 last_inv_str = str(last_inv)
+
+    # Kapazität des Betriebs (neu)
+    capacity_raw = _get_meta("business_capacity")
+    capacity_str = (capacity_raw if capacity_raw and capacity_raw.strip() else "—")
 
     # Systemhinweise
     system_issues = []
@@ -309,7 +306,6 @@ def _render_home():
     # 4 Karten nebeneinander
     c1, c2, c3, c4 = st.columns(4, gap="large")
 
-    # 1) Systemstatus
     with c1:
         today_str = datetime.date.today().strftime("%d.%m.%Y")
         st.markdown(
@@ -326,7 +322,6 @@ def _render_home():
             unsafe_allow_html=True,
         )
 
-    # 2) Backupstatus
     with c2:
         last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
         st.markdown(
@@ -342,7 +337,6 @@ def _render_home():
             unsafe_allow_html=True,
         )
 
-    # 3) Datenbankstatus
     with c3:
         st.markdown(
             _card_html(
@@ -358,24 +352,24 @@ def _render_home():
             unsafe_allow_html=True,
         )
 
-    # 4) Betriebsstatus
     with c4:
+        betriebs_lines = [
+            f"Letzte Inventur: {last_inv_str}",
+            f"Artikel: {artikel_count}",
+            f"Fixkosten: {fix_cnt}",
+            f"Personalstand: {emp_cnt}",
+            f"Kapazität: {capacity_str} Pers.",
+            f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
+        ]
         st.markdown(
             _card_html(
                 "Betriebsstatus",
                 "#f97316",
-                [
-                    f"Letzte Inventur: {last_inv_str}",
-                    f"Artikel: {artikel_count}",
-                    f"Fixkosten: {fix_cnt}",
-                    f"Personalstand: {emp_cnt}",
-                    f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
-                ],
+                betriebs_lines,
             ),
             unsafe_allow_html=True,
         )
 
-    # Details nur bei Bedarf
     if system_issues:
         with st.expander("🔍 Systemhinweise anzeigen", expanded=False):
             for issue in system_issues:
@@ -418,6 +412,7 @@ def _render_business_admin():
         "business_email",
         "business_uid",
         "business_iban",
+        "business_capacity",   # NEU
         "business_note",
     ]
     values = _get_meta_many(keys)
@@ -435,7 +430,8 @@ def _render_business_admin():
         uid = f.text_input("UID", value=values.get("business_uid") or "")
         g, h = st.columns(2)
         iban = g.text_input("IBAN", value=values.get("business_iban") or "")
-        note = h.text_input("Notiz (optional)", value=values.get("business_note") or "")
+        capacity = h.number_input("Fassungsvermögen (Personen)", min_value=0, step=1, value=int(values.get("business_capacity") or 0))
+        note = st.text_input("Notiz (optional)", value=values.get("business_note") or "")
 
         if st.form_submit_button("💾 Speichern", use_container_width=True):
             _set_meta_many({
@@ -447,6 +443,7 @@ def _render_business_admin():
                 "business_email": email,
                 "business_uid": uid,
                 "business_iban": iban,
+                "business_capacity": str(capacity),   # als String speichern
                 "business_note": note,
             })
             st.success("Betriebsdaten gespeichert.")
@@ -675,7 +672,6 @@ def _render_db_overview():
 def _render_backup_admin():
     section_title("💾 Datenbank-Backups")
 
-    # Letztes Backup prominent
     lb = _last_backup_time()
     last_text = lb.strftime("%d.%m.%Y %H:%M") if lb else "—"
     st.caption(f"Letztes Backup: **{last_text}**")
