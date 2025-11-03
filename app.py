@@ -72,39 +72,62 @@ def fixed_footer():
     import streamlit as st
 
     st.markdown(
-        f"""
+        """
         <style>
-        .footer {{
+        .footer {
             position: fixed;
             bottom: 10px;
-            left: 12px;  /* leicht eingerückt, damit es nicht direkt am Rand klebt */
-            width: 240px; /* Sidebar-Breite anpassen, ggf. 250–280px je nach Layout */
+            left: 12px;
+            width: 240px;
             text-align: left;
             font-size: 12px;
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
-            white-space: nowrap;
-        }}
-        .footer a {{
+        }
+        .footer-button {
+            background: none;
+            border: none;
             color: #bbb;
-            text-decoration: none;
             font-weight: bold;
-        }}
-        .footer a:hover {{
+            text-decoration: none;
+            cursor: pointer;
+            padding: 0;
+            margin: 0;
+        }
+        .footer-button:hover {
             color: white;
             text-decoration: underline;
-        }}
+        }
         </style>
-
-        <div class="footer">
-            👤 <a href="?nav_choice=Profil">{st.session_state.get('username', 'Gast')}</a><br>
-            🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
-            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-        </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # 👉 statt Link: Streamlit-Button, der wie ein Textlink aussieht
+    footer_col = st.container()
+    with footer_col:
+        clicked = st.button(
+            f"👤 {st.session_state.get('username', 'Gast')}",
+            key="footer_user",
+            help="Profil öffnen",
+            use_container_width=False,
+        )
+
+        st.markdown(
+            f"""
+            <div class="footer">
+                🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+                <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ✅ Wenn auf Usernamen geklickt wurde → direkt auf Profilseite umschalten
+    if clicked:
+        st.session_state.nav_choice = "Profil"
+        st.rerun()
     
 # ---------------- Sidebar ----------------
 def sidebar():
