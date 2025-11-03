@@ -27,8 +27,8 @@ def import_modules():
             modules[name] = None
             errors[name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-    for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
-        try_import(mod_name)
+for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
+    try_import(f"modules.{mod_name}")
 
     return modules, errors
 
