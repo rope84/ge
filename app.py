@@ -108,6 +108,12 @@ def fixed_footer():
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
+        # Query-Parameter abfangen
+query_params = st.query_params
+if "nav_choice" in query_params:
+    st.session_state["nav_choice"] = query_params["nav_choice"]
+    # Einmalige Rücksetzung, damit es nicht hängenbleibt
+    st.query_params.clear()
         # Flag vor ALLEM abfangen
         if st.session_state.get("go_profile"):
             st.session_state["nav_choice"] = "Profil"
