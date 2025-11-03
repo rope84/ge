@@ -87,13 +87,18 @@ def fixed_footer():
             opacity: 0.85;
             line-height: 1.4em;
         }
-        .footer-link {
+        .link-btn > button {
+            background: none !important;
+            border: none;
             color: #bbb;
-            text-decoration: none;
             font-weight: bold;
+            text-decoration: none;
             cursor: pointer;
+            padding: 0;
+            margin: 0;
+            font-size: 12px;
         }
-        .footer-link:hover {
+        .link-btn > button:hover {
             color: white;
             text-decoration: underline;
         }
@@ -102,39 +107,26 @@ def fixed_footer():
         unsafe_allow_html=True,
     )
 
-    # "Virtueller" Link – kein Reload!
     username = st.session_state.get("username", "Gast")
 
-    st.markdown(
-        f"""
-        <div class="footer">
-            👤 <span class="footer-link" id="userlink">{username}</span><br>
+    # Unsichtbarer Container mit Button
+    footer_col = st.container()
+    with footer_col:
+        st.markdown('<div class="footer">', unsafe_allow_html=True)
+
+        clicked = st.button(f"👤 {username}", key="footer_user", help="Profil anzeigen", use_container_width=False)
+        if clicked:
+            st.session_state["nav_choice"] = "Profil"
+            st.rerun()
+
+        st.markdown(
+            f"""
             🧭 <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-        # Klick-Event: auf Klick warten und "clicked" zurückgeben
-    click = st_javascript(
-        """
-        const el = document.getElementById('userlink');
-        if (!el) {
-            // Element (noch) nicht da -> nichts zurückgeben
-            null;
-        } else {
-            // Warten bis geklickt wird, dann "clicked" an Python zurückgeben
-            await new Promise(resolve => {
-                el.addEventListener('click', () => resolve('clicked'), { once: true });
-            });
-        }
-        """
-    )
-
-    if click == "clicked":
-        st.session_state["nav_choice"] = "Profil"
-        st.rerun()
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
    
 # ---------------- Sidebar ----------------
 def sidebar():
