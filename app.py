@@ -110,16 +110,7 @@ def fixed_footer():
         """,
         unsafe_allow_html=True,
     )
-    # Button, der wie ein Link aussieht
-    if st.button(
-        f"👤 {st.session_state.get('username', 'Gast')}",
-        key="footer_user",
-        help="Profil öffnen",
-        use_container_width=False,
-    ):
-        st.session_state.nav_choice = "Profil"
-        st.rerun()
-
+ 
     # Restliche Infos
     st.markdown(
         f"""
