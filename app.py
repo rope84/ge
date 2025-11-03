@@ -133,29 +133,31 @@ def fixed_footer():
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
+        # Flag vor ALLEM abfangen
+        if st.session_state.get("go_profile"):
+            st.session_state["nav_choice"] = "Profil"
+            del st.session_state["go_profile"]
+
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        # Navigation – an Session-State gebunden
         display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
 
+        # Radio direkt an nav_choice binden
         st.radio(
             "Navigation",
             display_pages,
             index=display_pages.index(st.session_state.get("nav_choice", "Start")),
             label_visibility="collapsed",
-            key="nav_choice",   # direkter Bind an Session-State
+            key="nav_choice",
         )
 
         st.divider()
-
-        # Logout-Button
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-        # 👇 Footer immer unten in der Sidebar anzeigen
         fixed_footer()
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
