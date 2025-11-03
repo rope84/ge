@@ -1,5 +1,6 @@
 def render_login_form(app_name: str, app_version: str):
     import streamlit as st
+    st.write("🧩 DEBUG: render_login_form wurde geladen")  # Debug-Test
 
     # --- Styling ---
     st.markdown(
