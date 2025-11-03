@@ -83,8 +83,19 @@ def sidebar():
         if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
-        small_footer(
-    f"""
+    def small_footer(html_content: str):
+    st.markdown(
+        f"""
+        <div style="
+            position: absolute;
+            bottom: 10px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            color: gray;
+            opacity: 0.8;
+        ">
     <div style='text-align:center; font-size:12px; color:gray; line-height:1.4em;'>
         👤 <b>{st.session_state.username or 'Gast'}</b> · 
         🧭 <span style='opacity:0.8'>{st.session_state.role}</span><br>
@@ -92,7 +103,8 @@ def sidebar():
     </div>
     """
 )
-
+ unsafe_allow_html=True,
+    )
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
