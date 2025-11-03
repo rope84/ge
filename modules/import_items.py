@@ -7,7 +7,6 @@ from core.ui_theme import section_title
 # Hilfsfunktionen
 # -------------------------------
 def _ensure_items_table():
-    """Erstellt Tabelle 'items' falls nicht vorhanden."""
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
@@ -25,23 +24,21 @@ def _ensure_items_table():
 
 
 def _save_items(df: pd.DataFrame):
-    """Schreibt DataFrame in Tabelle 'items'."""
     _ensure_items_table()
     with conn() as cn:
         c = cn.cursor()
         for _, row in df.iterrows():
             name = str(row["Artikel"]).strip()
-            unit = str(row["Einheit"]).strip() if "Einheit" in row and pd.notna(row["Einheit"]) else ""
-            qty = float(row["Menge"]) if "Menge" in row and pd.notna(row["Menge"]) else 0.0
-            price = float(row["Einkaufspreis"]) if "Einkaufspreis" in row and pd.notna(row["Einkaufspreis"]) else 0.0
+            unit = str(row.get("Einheit", "")).strip()
+            qty = float(row.get("Menge", 0))
+            price = float(row.get("Einkaufspreis", 0))
             total = qty * price
-            cat = str(row["Kategorie"]) if "Kategorie" in row and pd.notna(row["Kategorie"]) else ""
+            cat = str(row.get("Kategorie", "")).strip()
             c.execute("""
                 INSERT OR REPLACE INTO items(name, unit, stock_qty, purchase_price, category, total_value)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (name, unit, qty, price, cat, total))
         cn.commit()
-
 
 # -------------------------------
 # Haupt-UI
@@ -49,53 +46,75 @@ def _save_items(df: pd.DataFrame):
 def render_import_items():
     st.markdown("<br>", unsafe_allow_html=True)
     section_title("📦 Artikelimport & Verwaltung")
+    st.caption("Lade deine Getränkedaten hoch, ordne die Spalten zu und speichere sie in die Datenbank.")
 
-    st.caption("Hier kannst du Getränkedaten per Excel hochladen, bearbeiten und in die Datenbank übernehmen.")
-
-    # Zustand im Session State speichern (mehrstufiger Ablauf)
     if "import_stage" not in st.session_state:
         st.session_state.import_stage = "upload"
         st.session_state.df_preview = None
+        st.session_state.mapping = {}
 
-    # --- SCHRITT 1: Upload ---
+    # ---------------- SCHRITT 1: UPLOAD ----------------
     if st.session_state.import_stage == "upload":
         uploaded = st.file_uploader("Excel-Datei auswählen", type=["xlsx", "xls"])
-        st.info("Die Datei sollte folgende Spalten enthalten: **Artikel, Einheit, Menge, Einkaufspreis** (optional Kategorie).")
-
         if uploaded:
             try:
                 df = pd.read_excel(uploaded)
+                df.columns = [str(c).strip() for c in df.columns]
+                st.success(f"✅ Datei geladen – {len(df)} Zeilen, {len(df.columns)} Spalten.")
+                st.dataframe(df.head(), use_container_width=True)
 
-                # Spalten anpassen / Standardnamen
-                expected = ["Artikel", "Einheit", "Menge", "Einkaufspreis"]
-                df.columns = [col.strip() for col in df.columns]
-                missing = [c for c in expected if c not in df.columns]
-                if missing:
-                    st.warning(f"⚠️ Folgende Spalten fehlen: {', '.join(missing)}")
-                else:
-                    st.success(f"✅ Datei erfolgreich geladen ({len(df)} Zeilen).")
-                    st.dataframe(df, use_container_width=True, height=400)
+                # Vorschlag für Spaltenzuordnung
+                possible_mappings = {
+                    "Artikel": next((c for c in df.columns if "art" in c.lower() or "produkt" in c.lower()), None),
+                    "Einheit": next((c for c in df.columns if "einheit" in c.lower() or "menge" in c.lower()), None),
+                    "Menge": next((c for c in df.columns if "bestand" in c.lower() or "stand" in c.lower()), None),
+                    "Einkaufspreis": next((c for c in df.columns if "preis" in c.lower() or "netto" in c.lower()), None),
+                    "Kategorie": next((c for c in df.columns if "kategorie" in c.lower() or "gruppe" in c.lower()), None),
+                }
+
+                st.markdown("### 🔠 Spaltenzuordnung")
+                st.caption("Ordne hier deine Excel-Spalten den richtigen Feldern zu:")
+
+                mapping = {}
+                cols = list(df.columns)
+                for field, suggestion in possible_mappings.items():
+                    mapping[field] = st.selectbox(
+                        f"{field}-Spalte auswählen",
+                        options=["<keine>"] + cols,
+                        index=cols.index(suggestion) + 1 if suggestion in cols else 0
+                    )
+
+                if st.button("➡️ Weiter zur Bearbeitung", use_container_width=True):
+                    st.session_state.mapping = mapping
                     st.session_state.df_preview = df
-                    if st.button("➡️ Weiter zur Bearbeitung", use_container_width=True):
-                        st.session_state.import_stage = "edit"
-                        st.rerun()
+                    st.session_state.import_stage = "edit"
+                    st.rerun()
+
             except Exception as e:
                 st.error(f"Fehler beim Lesen der Datei: {e}")
 
-    # --- SCHRITT 2: Bearbeitung ---
+    # ---------------- SCHRITT 2: BEARBEITUNG ----------------
     elif st.session_state.import_stage == "edit":
-        df = st.session_state.df_preview.copy()
-        st.markdown("### ✏️ Artikel bearbeiten")
+        df = st.session_state.df_preview
+        mapping = st.session_state.mapping
 
-        edited = st.data_editor(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic",
-            key="edited_import_df"
-        )
+        # Neue DataFrame-Struktur aufbauen
+        data = {
+            "Artikel": df[mapping["Artikel"]] if mapping["Artikel"] != "<keine>" else "",
+            "Einheit": df[mapping["Einheit"]] if mapping["Einheit"] != "<keine>" else "",
+            "Menge": df[mapping["Menge"]] if mapping["Menge"] != "<keine>" else 0,
+            "Einkaufspreis": df[mapping["Einkaufspreis"]] if mapping["Einkaufspreis"] != "<keine>" else 0,
+            "Kategorie": df[mapping["Kategorie"]] if mapping["Kategorie"] != "<keine>" else "",
+        }
+        new_df = pd.DataFrame(data)
+        new_df["Menge"] = pd.to_numeric(new_df["Menge"], errors="coerce").fillna(0)
+        new_df["Einkaufspreis"] = pd.to_numeric(new_df["Einkaufspreis"], errors="coerce").fillna(0)
+        new_df["Gesamtwert"] = new_df["Menge"] * new_df["Einkaufspreis"]
 
-        col1, col2 = st.columns([1, 1])
+        st.markdown("### ✏️ Artikeldaten überprüfen & anpassen")
+        edited = st.data_editor(new_df, use_container_width=True, hide_index=True, num_rows="dynamic", key="edited_items")
+
+        col1, col2 = st.columns(2)
         if col1.button("⬅️ Zurück", use_container_width=True):
             st.session_state.import_stage = "upload"
             st.rerun()
@@ -103,7 +122,7 @@ def render_import_items():
         if col2.button("💾 In Datenbank speichern", use_container_width=True):
             try:
                 _save_items(edited)
-                st.success("🎉 Artikel erfolgreich in die Datenbank übertragen!")
+                st.success("🎉 Artikel erfolgreich gespeichert!")
                 st.session_state.import_stage = "upload"
                 st.session_state.df_preview = None
             except Exception as e:
