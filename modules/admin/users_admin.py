@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from core.db import conn
 
-# --- Style-Helper (Card, Farben etc.) ---
+
+# --- Hilfsfunktionen & Styles ---
 def _role_color(role: str) -> str:
     colors = {
         "admin": "#e11d48",
@@ -11,6 +12,7 @@ def _role_color(role: str) -> str:
         "inventur": "#f59e0b",
     }
     return colors.get(role, "#6b7280")
+
 
 def _card(title: str, value: str, color: str) -> str:
     return f"""
@@ -29,19 +31,20 @@ def _card(title: str, value: str, color: str) -> str:
     </div>
     """
 
+
 def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username   TEXT NOT NULL UNIQUE,
-            email      TEXT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT,
             first_name TEXT,
-            last_name  TEXT,
-            role       TEXT NOT NULL,
-            functions  TEXT DEFAULT '',
-            passhash   TEXT NOT NULL DEFAULT '',
+            last_name TEXT,
+            role TEXT NOT NULL,
+            functions TEXT DEFAULT '',
+            passhash TEXT NOT NULL DEFAULT '',
             created_at TEXT
         )
         """)
@@ -49,52 +52,44 @@ def _ensure_tables():
         CREATE TABLE IF NOT EXISTS functions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
-            description TEXT
+            description TEXT,
+            can_view_sales INTEGER DEFAULT 0,
+            can_edit_sales INTEGER DEFAULT 0,
+            can_view_inventory INTEGER DEFAULT 0,
+            can_edit_inventory INTEGER DEFAULT 0
         )
         """)
-        if c.execute("SELECT COUNT(*) FROM functions").fetchone()[0] == 0:
-            c.executemany(
-                "INSERT INTO functions(name, description) VALUES(?,?)",
-                [
-                    ("Admin","Vollzugriff auf alle Module"),
-                    ("Barleiter","Zugriff auf Bar & Planung"),
-                    ("Lager","Inventur & Artikelverwaltung"),
-                    ("Inventur","Nur Bestandsansicht")
-                ]
-            )
+        # Standard Adminfunktion
+        if c.execute("SELECT COUNT(*) FROM functions WHERE name='Admin'").fetchone()[0] == 0:
+            c.execute("INSERT INTO functions(name, description, can_view_sales, can_edit_sales, can_view_inventory, can_edit_inventory) VALUES('Admin', 'Vollzugriff', 1,1,1,1)")
         cn.commit()
 
 
+# --- Haupt-UI ---
 def render_users_admin():
     _ensure_tables()
 
-    tabs = st.tabs(["📊 Übersicht", "👤 Benutzer", "🔍 Suchen & Bearbeiten", "⚙️ Funktionen"])
+    tabs = st.tabs(["📊 Übersicht", "🧩 User erstellen", "🔍 Suchen & Bearbeiten", "⚙️ Rollen & Rechte"])
 
-    # ---------------- TAB 1: Übersicht ----------------
+    # ---------- TAB 1: Übersicht ----------
     with tabs[0]:
         with conn() as cn:
             c = cn.cursor()
             total = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            rows  = c.execute("SELECT role, COUNT(*) FROM users GROUP BY role ORDER BY role").fetchall()
+            rows = c.execute("SELECT role, COUNT(*) FROM users GROUP BY role ORDER BY role").fetchall()
 
-        col_total = st.columns(1)[0]
-        col_total.markdown(_card("Gesamtanzahl Benutzer", str(total), "#3b82f6"), unsafe_allow_html=True)
+        st.markdown(_card("Gesamtanzahl User", str(total), "#3b82f6"), unsafe_allow_html=True)
         st.write("")
 
         if rows:
-            def chunk(lst, n):
-                for i in range(0, len(lst), n):
-                    yield lst[i:i+n]
-            for group in chunk(rows, 4):
-                cols = st.columns(len(group))
-                for (role, count), col in zip(group, cols):
-                    col.markdown(_card(f"Rolle: {role}", str(count), _role_color(role)), unsafe_allow_html=True)
+            for role, count in rows:
+                st.markdown(_card(f"Rolle: {role}", str(count), _role_color(role)), unsafe_allow_html=True)
         else:
-            st.info("Noch keine Benutzer vorhanden.")
+            st.info("Noch keine User vorhanden.")
 
-    # ---------------- TAB 2: Benutzer anlegen ----------------
+    # ---------- TAB 2: User erstellen ----------
     with tabs[1]:
-        st.subheader("Neuen Benutzer anlegen")
+        st.subheader("Neuen User erstellen")
 
         with conn() as cn:
             c = cn.cursor()
@@ -103,12 +98,12 @@ def render_users_admin():
         with st.form("add_user_form"):
             c1, c2 = st.columns(2)
             username = c1.text_input("Benutzername")
-            email    = c2.text_input("E-Mail")
+            email = c2.text_input("E-Mail")
             c3, c4 = st.columns(2)
-            first_name = c3.text_input("Vorname")
-            last_name  = c4.text_input("Nachname")
+            first = c3.text_input("Vorname")
+            last = c4.text_input("Nachname")
             role = st.selectbox("Rolle", ["admin", "barlead", "user", "inventur"], index=2)
-            selected_funcs = st.multiselect("Funktionen", func_list)
+            funcs = st.multiselect("Zugeordnete Funktion(en)", func_list)
             password = st.text_input("Passwort", type="password")
 
             if st.form_submit_button("➕ User anlegen", use_container_width=True, key="create_user"):
@@ -121,147 +116,172 @@ def render_users_admin():
                             c.execute("""
                                 INSERT INTO users(username, email, first_name, last_name, role, functions, passhash, created_at)
                                 VALUES(?,?,?,?,?,?, '', datetime('now'))
-                            """, (username, email, first_name, last_name, role, ", ".join(selected_funcs)))
+                            """, (username, email, first, last, role, ", ".join(funcs)))
                             cn.commit()
-                        st.success(f"Benutzer '{username}' angelegt.")
+                        st.success(f"User '{username}' wurde erstellt.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler beim Anlegen: {e}")
 
-    # ---------------- TAB 3: Suchen & Bearbeiten ----------------
+    # ---------- TAB 3: Suchen & Bearbeiten ----------
     with tabs[2]:
-        st.subheader("Benutzer suchen & bearbeiten")
+        st.subheader("User suchen & bearbeiten")
 
         col1, col2 = st.columns([3, 2])
-        query = col1.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)")
+        query = col1.text_input("Suchbegriff (Name, E-Mail, Rolle …)")
         letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        selected_letter = col2.selectbox("Nach Anfangsbuchstaben filtern", ["—"] + letters)
+        sel_letter = col2.selectbox("Nach Buchstaben filtern", ["—"] + letters)
 
-        where_clause = ""
+        where = ""
         params = []
-
         if query:
-            where_clause = """WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?"""
+            where = """WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?"""
             params = [f"%{query}%"] * 6
-        elif selected_letter and selected_letter != "—":
-            letter = selected_letter + "%"
-            where_clause = """WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"""
+        elif sel_letter != "—":
+            letter = sel_letter + "%"
+            where = """WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"""
             params = [letter, letter, letter]
 
-        # Funktionsliste laden
-        with conn() as cn:
-            c = cn.cursor()
-            func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
-
-        if where_clause:
+        if where:
             with conn() as cn:
                 c = cn.cursor()
-                results = c.execute(f"""
-                    SELECT id, username, email, first_name, last_name, role, functions
-                    FROM users
-                    {where_clause}
-                    ORDER BY username
-                """, tuple(params)).fetchall()
+                res = c.execute(f"SELECT id, username, email, first_name, last_name, role, functions FROM users {where} ORDER BY username", tuple(params)).fetchall()
 
-            if results:
-                usernames = [r[1] for r in results]
-                sel_user = st.selectbox("Benutzer auswählen", usernames)
+            if res:
+                usernames = [r[1] for r in res]
+                sel_user = st.selectbox("User auswählen", usernames)
 
                 if sel_user:
-                    row = next(r for r in results if r[1] == sel_user)
-                    uid, username, email, first, last, role, funcs = row
+                    row = next(r for r in res if r[1] == sel_user)
+                    uid, uname, email, first, last, role, funcs = row
+                    funcs_list = [f.strip() for f in (funcs or '').split(',') if f.strip()]
 
                     st.markdown("---")
-                    st.markdown(
-                        f"""
-                        <div style='padding:16px; border-radius:12px; background:rgba(255,255,255,0.04);
-                        box-shadow:0 4px 12px rgba(0,0,0,0.2); margin-bottom:18px;'>
-                            <h4 style='margin:0;'>🧑‍💻 {username}</h4>
-                            <p style='margin-top:2px; opacity:0.8; font-size:13px;'>
-                                Rolle: <b>{role}</b> &nbsp; | &nbsp; Angelegt am: <i>{uid}</i>
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True
-                    )
+                    st.markdown(f"### 🧑‍💻 {uname}")
+                    st.caption(f"Rolle: **{role}**  |  ID: {uid}")
 
-                    with st.form(f"edit_user_{uid}"):
+                    with st.form(f"edit_{uid}"):
                         e1, e2 = st.columns(2)
-                        e_email = e1.text_input("E-Mail", email)
-                        e_role  = e2.selectbox(
-                            "Rolle",
-                            ["admin", "barlead", "user", "inventur"],
-                            index=["admin","barlead","user","inventur"].index(role) if role in ["admin","barlead","user","inventur"] else 2,
-                            key=f"role_{uid}"
-                        )
+                        new_email = e1.text_input("E-Mail", email)
+                        new_role = e2.selectbox("Rolle", ["admin", "barlead", "user", "inventur"], index=["admin","barlead","user","inventur"].index(role))
                         e3, e4 = st.columns(2)
-                        e_first = e3.text_input("Vorname", first or "")
-                        e_last  = e4.text_input("Nachname", last or "")
-                        e_funcs = st.multiselect(
-                            "Funktionen",
-                            func_list,
-                            default=[f.strip() for f in (funcs or "").split(",") if f.strip()],
-                            key=f"funcs_{uid}"
-                        )
+                        new_first = e3.text_input("Vorname", first or "")
+                        new_last = e4.text_input("Nachname", last or "")
 
-                        save_btn, del_btn = st.columns([2, 1])
+                        with conn() as cn:
+                            c = cn.cursor()
+                            all_funcs = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
+                        new_funcs = st.multiselect("Zugeordnete Funktion(en)", all_funcs, default=funcs_list)
 
-                        if save_btn.form_submit_button("💾 Änderungen speichern", use_container_width=True, key=f"save_{uid}"):
-                            try:
-                                with conn() as cn:
-                                    c = cn.cursor()
-                                    c.execute("""
-                                        UPDATE users
-                                        SET email=?, first_name=?, last_name=?, role=?, functions=?
-                                        WHERE id=?
-                                    """, (e_email, e_first, e_last, e_role, ", ".join(e_funcs), uid))
-                                    cn.commit()
-                                st.success("✅ Benutzer aktualisiert.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Fehler beim Speichern: {e}")
+                        save_col, del_col = st.columns([2,1])
+                        if save_col.form_submit_button("💾 Änderungen speichern", key=f"save_{uid}"):
+                            with conn() as cn:
+                                c = cn.cursor()
+                                c.execute("""UPDATE users SET email=?, first_name=?, last_name=?, role=?, functions=? WHERE id=?""",
+                                          (new_email, new_first, new_last, new_role, ", ".join(new_funcs), uid))
+                                cn.commit()
+                            st.success("Änderungen gespeichert.")
+                            st.rerun()
 
-                    with st.expander("❌ Benutzer löschen", expanded=False):
-                        st.warning("Achtung: Das Löschen ist endgültig!")
-                        confirm = st.checkbox("Löschen bestätigen", key=f"confirm_{uid}")
-                        if st.button("🗑️ Benutzer jetzt löschen", use_container_width=True, disabled=not confirm, key=f"delete_{uid}"):
-                            try:
-                                with conn() as cn:
-                                    c = cn.cursor()
-                                    c.execute("DELETE FROM users WHERE id=?", (uid,))
-                                    cn.commit()
-                                st.success(f"Benutzer '{username}' gelöscht.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Fehler beim Löschen: {e}")
+                    with st.expander("🗑️ User löschen", expanded=False):
+                        st.warning("⚠️ Dieser Vorgang kann nicht rückgängig gemacht werden!")
+                        confirm = st.checkbox("Löschen bestätigen", key=f"del_conf_{uid}")
+                        if st.button("❌ Jetzt löschen", disabled=not confirm, key=f"del_{uid}"):
+                            with conn() as cn:
+                                c = cn.cursor()
+                                c.execute("DELETE FROM users WHERE id=?", (uid,))
+                                cn.commit()
+                            st.success(f"User '{uname}' wurde gelöscht.")
+                            st.rerun()
             else:
-                st.info("Keine Benutzer gefunden.")
+                st.info("Keine User gefunden.")
         else:
             st.caption("🔎 Bitte Suchbegriff eingeben oder Buchstaben auswählen.")
 
-    # ---------------- TAB 4: Funktionen ----------------
+    # ---------- TAB 4: Rollen & Rechte ----------
     with tabs[3]:
-        st.subheader("Funktionen verwalten")
+        st.subheader("Rollen & Rechte verwalten")
+
         with conn() as cn:
             c = cn.cursor()
-            funcs = c.execute("SELECT id, name, description FROM functions ORDER BY name").fetchall()
+            functions = c.execute("""
+                SELECT id, name, description, can_view_sales, can_edit_sales, can_view_inventory, can_edit_inventory
+                FROM functions ORDER BY name
+            """).fetchall()
 
-        df = pd.DataFrame(funcs, columns=["ID", "Funktion", "Beschreibung"])
-        edited = st.data_editor(
-            df.drop(columns=["ID"]),
-            use_container_width=True,
-            num_rows="dynamic",
-            height=400
-        )
+        # Bestehende Rollen anzeigen
+        for fid, name, desc, v_sales, e_sales, v_inv, e_inv in functions:
+            with st.expander(f"🎯 {name}", expanded=False):
+                col_info, col_actions = st.columns([3,1])
+                col_info.text_area("Beschreibung", desc or "", key=f"desc_{fid}")
+                rights = {
+                    "Umsätze ansehen": v_sales,
+                    "Umsätze bearbeiten": e_sales,
+                    "Inventur ansehen": v_inv,
+                    "Inventur bearbeiten": e_inv
+                }
+                st.write("**Rechte:**")
+                new_vals = {}
+                for label, val in rights.items():
+                    new_vals[label] = st.checkbox(label, value=bool(val), key=f"{label}_{fid}")
 
-        if st.button("💾 Änderungen speichern", use_container_width=True, key="funcs_save"):
-            with conn() as cn:
-                c = cn.cursor()
-                c.execute("DELETE FROM functions")
-                for _, row in edited.iterrows():
-                    name = (row.get("Funktion") or "").strip()
-                    desc = (row.get("Beschreibung") or "").strip()
-                    if name:
-                        c.execute("INSERT INTO functions(name, description) VALUES(?,?)", (name, desc))
-                cn.commit()
-            st.success("Funktionen gespeichert.")
-            st.rerun()
+                # Anzahl User dieser Rolle anzeigen
+                with conn() as cn:
+                    c = cn.cursor()
+                    count = c.execute("SELECT COUNT(*) FROM users WHERE functions LIKE ?", (f"%{name}%",)).fetchone()[0]
+                st.caption(f"👥 Zugeordnete User: {count}")
+
+                if name != "Admin":
+                    save_col, del_col = st.columns([2,1])
+                    if save_col.button("💾 Änderungen speichern", key=f"save_func_{fid}"):
+                        with conn() as cn:
+                            c = cn.cursor()
+                            c.execute("""
+                                UPDATE functions
+                                SET description=?, can_view_sales=?, can_edit_sales=?, can_view_inventory=?, can_edit_inventory=?
+                                WHERE id=?
+                            """, (
+                                st.session_state[f"desc_{fid}"],
+                                int(new_vals["Umsätze ansehen"]),
+                                int(new_vals["Umsätze bearbeiten"]),
+                                int(new_vals["Inventur ansehen"]),
+                                int(new_vals["Inventur bearbeiten"]),
+                                fid
+                            ))
+                            cn.commit()
+                        st.success(f"Funktion '{name}' aktualisiert.")
+                        st.rerun()
+
+                    if del_col.button("🗑️ Löschen", key=f"del_func_{fid}"):
+                        with conn() as cn:
+                            c = cn.cursor()
+                            c.execute("DELETE FROM functions WHERE id=?", (fid,))
+                            cn.commit()
+                        st.warning(f"Funktion '{name}' gelöscht.")
+                        st.rerun()
+                else:
+                    st.info("Admin-Rolle kann nicht geändert oder gelöscht werden.")
+
+        st.markdown("---")
+        st.subheader("➕ Neue Funktion hinzufügen")
+        with st.form("new_func_form"):
+            nf_name = st.text_input("Funktionsname")
+            nf_desc = st.text_area("Beschreibung")
+            st.markdown("**Rechte:**")
+            nf_v_sales = st.checkbox("Umsätze ansehen", value=False)
+            nf_e_sales = st.checkbox("Umsätze bearbeiten", value=False)
+            nf_v_inv = st.checkbox("Inventur ansehen", value=False)
+            nf_e_inv = st.checkbox("Inventur bearbeiten", value=False)
+            if st.form_submit_button("➕ Funktion hinzufügen", key="add_func"):
+                if nf_name.strip():
+                    with conn() as cn:
+                        c = cn.cursor()
+                        c.execute("""
+                            INSERT INTO functions(name, description, can_view_sales, can_edit_sales, can_view_inventory, can_edit_inventory)
+                            VALUES(?,?,?,?,?,?)
+                        """, (nf_name.strip(), nf_desc.strip(), int(nf_v_sales), int(nf_e_sales), int(nf_v_inv), int(nf_e_inv)))
+                        cn.commit()
+                    st.success(f"Neue Funktion '{nf_name}' wurde hinzugefügt.")
+                    st.rerun()
+                else:
+                    st.warning("Bitte einen Namen angeben.")
