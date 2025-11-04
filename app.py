@@ -194,18 +194,23 @@ def route():
     try:
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
+
         elif mod_key == "abrechnung":
             mod_func(st.session_state.role, st.session_state.scope)
+
         elif mod_key == "dashboard":
             mod_func()
+
         elif mod_key == "inventur":
             try:
                 mod_func(st.session_state.username or "unknown", st.session_state.role or "guest")
             except TypeError:
                 mod_func(st.session_state.username or "unknown")
+
         elif mod_key == "profile":
             mod_func(st.session_state.username or "")
-                elif mod_key == "admin":
+
+        elif mod_key == "admin":
             if st.session_state.role != "admin":
                 st.error("Kein Zugriff. Adminrechte erforderlich.")
             else:
@@ -220,6 +225,13 @@ def route():
 
                 # Rendern
                 mod_func()
+
+        else:
+            st.error(f"Seite nicht implementiert: {mod_key}")
+
+    except Exception:
+        st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
+        st.code(traceback.format_exc(), language="text")
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
