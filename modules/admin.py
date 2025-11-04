@@ -37,58 +37,73 @@ def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
-        tables_sql = {
-            "users": """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    role TEXT NOT NULL,
-                    email TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    passhash TEXT NOT NULL DEFAULT ''
-                )
-            """,
-            "employees": """
-                CREATE TABLE IF NOT EXISTS employees (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    contract TEXT NOT NULL,
-                    hourly REAL NOT NULL DEFAULT 0,
-                    is_barlead INTEGER NOT NULL DEFAULT 0,
-                    bar_no INTEGER
-                )
-            """,
-            "fixcosts": """
-                CREATE TABLE IF NOT EXISTS fixcosts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    amount REAL NOT NULL DEFAULT 0,
-                    note TEXT,
-                    is_active INTEGER NOT NULL DEFAULT 1
-                )
-            """,
-            "meta": """
-                CREATE TABLE IF NOT EXISTS meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """,
-            "changelog": """
-                CREATE TABLE IF NOT EXISTS changelog (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    note TEXT NOT NULL
-                )
-            """
-        }
+        # --- USERS (erweitert um 'functions') ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL,
+                email TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                passhash TEXT NOT NULL DEFAULT '',
+                functions TEXT DEFAULT '',           -- NEU: kommagetrennte Funktionsliste
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        # Migration: 'functions' ggf. nachziehen
+        c.execute("PRAGMA table_info(users)")
+        user_cols = {row[1] for row in c.fetchall()}
+        if "functions" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+        if "created_at" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
 
-        for name, sql in tables_sql.items():
-            if not _table_exists(c, name):
-                c.execute(sql)
+        # --- FUNKTIONSKATALOG ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS functions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT
+            )
+        """)
+        # Defaults, falls leer
+        have_funcs = c.execute("SELECT COUNT(*) FROM functions").fetchone()[0]
+        if have_funcs == 0:
+            defaults = [
+                ("Admin", "Vollzugriff auf alle Module"),
+                ("Barleiter", "Zugriff auf Barumsätze & Planung"),
+                ("Lager", "Inventur & Artikelverwaltung"),
+                ("Inventur", "Nur Inventur- und Bestandsansicht"),
+            ]
+            c.executemany("INSERT INTO functions(name, description) VALUES(?,?)", defaults)
+
+        # --- FIXCOSTS, META, CHANGELOG (wie gehabt) ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS fixcosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS changelog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                version TEXT NOT NULL,
+                note TEXT NOT NULL
+            )
+        """)
+
         cn.commit()
-
 
 def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
@@ -251,7 +266,6 @@ def _pill(text: str, color: str = "#10b981") -> str:
 def _render_home():
     # Live-Zahlen
     users_cnt = _count_rows("users")
-    emp_cnt   = _count_rows("employees")
     fix_cnt   = _count_rows("fixcosts")
     backups   = _list_backups()
     total_backups = len(backups)
@@ -263,7 +277,7 @@ def _render_home():
     db_size = _db_size_mb()
     num_tables, total_rows = _db_table_stats()
 
-    # Betriebskennzahlen (robust, ohne try/except-Schirm)
+    # Betriebskennzahlen
     last_inv = None
     artikel_count = 0
     einkauf_total = 0
@@ -277,11 +291,10 @@ def _render_home():
             row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
             last_inv = row[0] if row and row[0] else None
 
-        # ✅ Artikel aus Artikelstamm (items)
+        # Artikel aus Artikelstamm (items)
         if _table_exists(c, "items"):
             row = c.execute("SELECT COUNT(*) FROM items").fetchone()
             artikel_count = row[0] if row and row[0] else 0
-
             row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
             einkauf_total = row[0] if row and row[0] else 0
 
@@ -302,7 +315,7 @@ def _render_home():
             except Exception:
                 last_inv_str = str(last_inv)
 
-    # Kapazität des Betriebs (aus Meta)
+    # Kapazität (Meta)
     capacity_raw = _get_meta("business_capacity")
     capacity_str = (capacity_raw if capacity_raw and capacity_raw.strip() else "—")
 
@@ -310,12 +323,10 @@ def _render_home():
     system_issues = []
     if users_cnt == 0:
         system_issues.append("Keine Benutzer angelegt.")
-    if emp_cnt == 0:
-        system_issues.append("Keine Mitarbeiter angelegt.")
 
     system_color = "#22c55e" if not system_issues else "#f59e0b"
 
-    # 4 Karten nebeneinander
+    # 4 Karten
     c1, c2, c3, c4 = st.columns(4, gap="large")
 
     with c1:
@@ -327,7 +338,6 @@ def _render_home():
                 [
                     f"Prüfung: {today_str}",
                     f"Benutzer: {users_cnt}",
-                    f"Mitarbeiter: {emp_cnt}",
                     f"Fixkosten: {fix_cnt}",
                 ],
             ),
@@ -367,9 +377,8 @@ def _render_home():
     with c4:
         betriebs_lines = [
             f"Letzte Inventur: {last_inv_str}",
-            f"Artikel: {artikel_count}",           # <- hier steht jetzt die korrekte Anzahl der angelegten Artikel
-            f"Fixkosten: {fix_cnt}",
-            f"Personalstand: {emp_cnt}",
+            f"Artikel: {artikel_count}",
+            f"Personalstand: {users_cnt}",
             f"Kapazität: {capacity_str} Pers.",
             f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
         ]
@@ -393,7 +402,7 @@ def _render_home():
 
     st.divider()
 
-    # --- Changelog ---
+    # --- Changelog (wie gehabt) ---
     section_title("📝 Änderungsprotokoll")
     with conn() as cn:
         df = pd.read_sql(
@@ -463,65 +472,95 @@ def _render_business_admin():
 # ---------------- Benutzer ----------------
 def _render_user_admin():
     section_title("👤 Benutzerverwaltung")
+    # Zwei Unter-Tabs: Benutzer & Funktionen
+    sub = st.tabs(["👥 Benutzer", "⚙️ Funktionen"])
 
-    with conn() as cn:
-        c = cn.cursor()
-        users = c.execute("SELECT id, username, role, email, first_name, last_name FROM users ORDER BY id").fetchall()
+    # ---------- TAB 1: Benutzer ----------
+    with sub[0]:
+        with conn() as cn:
+            c = cn.cursor()
+            users = c.execute(
+                "SELECT id, username, role, email, first_name, last_name, functions FROM users ORDER BY id"
+            ).fetchall()
+            func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
 
-    with st.form("add_user_form"):
-        c1, c2 = st.columns(2)
-        new_user = c1.text_input("Benutzername")
-        new_pw   = c2.text_input("Passwort", type="password")
-        c3, c4 = st.columns(2)
-        new_role = c3.selectbox("Rolle", ["admin", "barlead", "user", "inventur"])
-        new_mail = c4.text_input("E-Mail")
-        if st.form_submit_button("➕ Benutzer anlegen"):
-            if new_user and new_pw:
-                try:
-                    with conn() as cn:
-                        c = cn.cursor()
-                        c.execute("""INSERT INTO users(username, role, email, passhash)
-                                     VALUES(?,?,?, '')""",
-                                  (new_user, new_role, new_mail))
-                        cn.commit()
-                    if change_password:
-                        change_password(new_user, new_pw)
-                    st.success(f"Benutzer '{new_user}' angelegt.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler beim Anlegen: {e}")
-            else:
-                st.warning("Benutzername und Passwort erforderlich.")
+        # Liste
+        if not users:
+            st.info("Noch keine Benutzer angelegt.")
+        else:
+            df = pd.DataFrame(users, columns=["id","username","role","email","first_name","last_name","functions"])
+            st.dataframe(df.drop(columns=["id"]), use_container_width=True, height=320)
 
-    st.divider()
-    if not users:
-        st.info("Noch keine Benutzer angelegt.")
-    else:
-        for uid, uname, role, email, first, last in users:
-            role_tag = _role_badge(role)
-            with st.expander(f"{uname}", expanded=False):
+        st.divider()
+        st.subheader("Neuen Benutzer anlegen")
+
+        with st.form("add_user_form"):
+            c1, c2 = st.columns(2)
+            new_user = c1.text_input("Benutzername")
+            new_pw   = c2.text_input("Passwort", type="password")
+            c3, c4 = st.columns(2)
+            new_role = c3.selectbox("Rolle", ["admin", "barlead", "user", "inventur"])
+            new_mail = c4.text_input("E-Mail")
+            c5, c6 = st.columns(2)
+            first_name = c5.text_input("Vorname")
+            last_name  = c6.text_input("Nachname")
+            selected_funcs = st.multiselect("Funktionen", func_list)
+
+            if st.form_submit_button("➕ Benutzer anlegen"):
+                if new_user and new_pw:
+                    try:
+                        with conn() as cn:
+                            c = cn.cursor()
+                            c.execute("""
+                                INSERT INTO users(username, role, email, first_name, last_name, passhash, functions)
+                                VALUES(?,?,?,?,?, '', ?)
+                            """, (new_user, new_role, new_mail, first_name, last_name, ", ".join(selected_funcs)))
+                            cn.commit()
+                        if change_password:
+                            change_password(new_user, new_pw)
+                        st.success(f"Benutzer '{new_user}' angelegt.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Anlegen: {e}")
+                else:
+                    st.warning("Benutzername und Passwort erforderlich.")
+
+        st.divider()
+        st.subheader("Benutzer bearbeiten")
+
+        # Editor wie gehabt: pro Benutzer ein Expander
+        for uid, uname, role, email, first, last, funcs in users:
+            with st.expander(uname, expanded=False):
+                role_tag = _role_badge(role)
                 st.markdown(role_tag, unsafe_allow_html=True)
 
                 a1, a2 = st.columns(2)
                 e_username = a1.text_input("Benutzername (Login/Anzeige)", uname, key=f"u_username_{uid}")
-                e_role  = a2.selectbox("Rolle", ["admin", "barlead", "user", "inventur"],
-                                       index=["admin","barlead","user","inventur"].index(role),
-                                       key=f"u_role_{uid}")
+                e_role  = a2.selectbox(
+                    "Rolle", ["admin", "barlead", "user", "inventur"],
+                    index=["admin","barlead","user","inventur"].index(role),
+                    key=f"u_role_{uid}"
+                )
                 b1, b2 = st.columns(2)
                 e_first = b1.text_input("Vorname", first or "", key=f"u_first_{uid}")
                 e_last  = b2.text_input("Nachname", last or "", key=f"u_last_{uid}")
                 e_email = st.text_input("E-Mail", email or "", key=f"u_mail_{uid}")
+
+                # NEU: Funktionen als Multiselect
+                curr_funcs = [f.strip() for f in (funcs or "").split(",") if f.strip()]
+                e_funcs = st.multiselect("Funktionen", func_list, default=curr_funcs, key=f"u_funcs_{uid}")
+
                 new_pw  = st.text_input("Neues Passwort (optional)", type="password", key=f"u_pw_{uid}")
 
-                s1, s2 = st.columns(2)
+                s1, s2, s3 = st.columns(3)
                 if s1.button("💾 Speichern", key=f"u_save_{uid}"):
                     try:
                         with conn() as cn:
                             c = cn.cursor()
                             c.execute("""UPDATE users
-                                         SET username=?, role=?, first_name=?, last_name=?, email=?
+                                         SET username=?, role=?, first_name=?, last_name=?, email=?, functions=?
                                          WHERE id=?""",
-                                      (e_username, e_role, e_first, e_last, e_email, uid))
+                                      (e_username, e_role, e_first, e_last, e_email, ", ".join(e_funcs), uid))
                             cn.commit()
                         if new_pw:
                             change_password(e_username, new_pw)
@@ -529,7 +568,7 @@ def _render_user_admin():
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-                if s2.button("🗑️ Löschen", key=f"u_del_{uid}"):
+                if s3.button("🗑️ Löschen", key=f"u_del_{uid}"):
                     with conn() as cn:
                         c = cn.cursor()
                         c.execute("DELETE FROM users WHERE id=?", (uid,))
@@ -537,63 +576,33 @@ def _render_user_admin():
                     st.warning(f"Benutzer '{uname}' gelöscht.")
                     st.rerun()
 
+    # ---------- TAB 2: Funktionen ----------
+    with sub[1]:
+        section_title("⚙️ Funktionen verwalten")
+        with conn() as cn:
+            c = cn.cursor()
+            funcs = c.execute("SELECT id, name, description FROM functions ORDER BY name").fetchall()
 
-# ---------------- Mitarbeiter ----------------
-def _render_employee_admin():
-    section_title("🧍 Mitarbeiterverwaltung")
+        df = pd.DataFrame(funcs, columns=["ID", "Funktion", "Beschreibung"])
+        edited = st.data_editor(
+            df.drop(columns=["ID"]),
+            use_container_width=True,
+            num_rows="dynamic",
+            height=min(500, 120 + 28 * max(3, len(df)))
+        )
 
-    with conn() as cn:
-        c = cn.cursor()
-        emps = c.execute("SELECT id, name, contract, hourly, is_barlead, bar_no FROM employees ORDER BY id").fetchall()
-
-    with st.form("add_emp_form"):
-        c1, c2 = st.columns(2)
-        name = c1.text_input("Name")
-        contract = c2.selectbox("Vertrag", ["Teilzeit", "Vollzeit", "Geringfügig", "Fallweise"])
-        c3, c4 = st.columns(2)
-        hourly = c3.number_input("Stundenlohn (€)", min_value=0.0, step=1.0)
-        barlead = c4.checkbox("Barleiter")
-        if st.form_submit_button("➕ Mitarbeiter hinzufügen"):
-            if not name:
-                st.warning("Name ist erforderlich.")
-            else:
-                with conn() as cn:
-                    c = cn.cursor()
-                    c.execute("""INSERT INTO employees(name, contract, hourly, is_barlead)
-                                 VALUES(?,?,?,?)""",
-                              (name, contract, hourly, int(barlead)))
-                    cn.commit()
-                st.success(f"Mitarbeiter '{name}' angelegt.")
-                st.rerun()
-
-    st.divider()
-    if not emps:
-        st.info("Noch keine Mitarbeiter.")
-    else:
-        for eid, name, contract, hourly, lead, barno in emps:
-            with st.expander(name, expanded=False):
-                c1, c2 = st.columns(2)
-                e_con = c1.text_input("Vertrag", contract, key=f"e_con_{eid}")
-                e_hour = c2.number_input("Stundenlohn (€)", value=float(hourly or 0.0), step=0.5, key=f"e_hour_{eid}")
-                e_lead = st.checkbox("Barleiter", value=bool(lead), key=f"e_lead_{eid}")
-
-                s1, s2 = st.columns(2)
-                if s1.button("💾 Speichern", key=f"e_save_{eid}"):
-                    with conn() as cn:
-                        c = cn.cursor()
-                        c.execute("""UPDATE employees SET contract=?, hourly=?, is_barlead=? WHERE id=?""",
-                                  (e_con, e_hour, int(e_lead), eid))
-                        cn.commit()
-                    st.success("Gespeichert.")
-                if s2.button("🗑️ Löschen", key=f"e_del_{eid}"):
-                    with conn() as cn:
-                        c = cn.cursor()
-                        c.execute("DELETE FROM employees WHERE id=?", (eid,))
-                        cn.commit()
-                    st.warning(f"Mitarbeiter '{name}' gelöscht.")
-                    st.rerun()
-
-
+        if st.button("💾 Funktionen speichern", use_container_width=True):
+            with conn() as cn:
+                c = cn.cursor()
+                c.execute("DELETE FROM functions")
+                for _, row in edited.iterrows():
+                    name = (row.get("Funktion") or "").strip()
+                    desc = (row.get("Beschreibung") or "").strip()
+                    if name:
+                        c.execute("INSERT INTO functions(name, description) VALUES(?,?)", (name, desc))
+                cn.commit()
+            st.success("Funktionen gespeichert.")
+            st.rerun()
 # ---------------- Fixkosten ----------------
 def _render_fixcost_admin():
     section_title("💰 Fixkostenverwaltung")
@@ -732,45 +741,33 @@ def render_admin():
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
     # 4) Tabs – Reihenfolge unverändert + neuer Tab „📦 Daten“
-    tabs = st.tabs([
+        tabs = st.tabs([
         "🏠 Übersicht",     # 0
         "🏢 Betrieb",       # 1
         "👤 Benutzer",      # 2
-        "🧍 Mitarbeiter",   # 3
-        "💰 Fixkosten",     # 4
-        "🗂️ Datenbank",     # 5
-        "📦 Daten",         # 6  <-- NEU: Import/Kategorien
-        "💾 Backups"        # 7
+        "💰 Fixkosten",     # 3
+        "🗂️ Datenbank",     # 4
+        "📦 Daten",         # 5
+        "💾 Backups"        # 6
     ])
 
-    # 5) Inhalte je Tab
     with tabs[0]:
         _render_home()
-
     with tabs[1]:
         _render_business_admin()
-
     with tabs[2]:
         _render_user_admin()
-
     with tabs[3]:
-        _render_employee_admin()
-
-    with tabs[4]:
         _render_fixcost_admin()
-
-    with tabs[5]:
+    with tabs[4]:
         _render_db_overview()
-
-    # Neuer „Daten“-Tab: Import & Kategorien-Tool laden
-    with tabs[6]:
+    with tabs[5]:
         try:
             from modules.import_items import render_data_tools
             render_data_tools()
         except Exception as e:
             st.error(f"Fehler beim Laden des Import-Tools: {e}")
-
-    with tabs[7]:
+    with tabs[6]:
         _render_backup_admin()
 
     # 6) Footer
