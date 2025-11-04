@@ -267,26 +267,32 @@ def _render_home():
 try:
     with conn() as cn:
         c = cn.cursor()
+
+        # Letzte Inventur
         last_inv = c.execute(
             "SELECT MAX(created_at) FROM inventur"
         ).fetchone()[0] if _table_exists(c, "inventur") else None
 
-        # ✅ NEU: Artikel aus Artikelstamm (items)
+        # ✅ Artikel aus Artikelstamm (items)
         artikel_count = c.execute(
             "SELECT COUNT(*) FROM items"
         ).fetchone()[0] if _table_exists(c, "items") else 0
 
+        # Einkaufspreise summieren
         einkauf_total = c.execute(
             "SELECT SUM(purchase_price) FROM items"
         ).fetchone()[0] if _table_exists(c, "items") else 0
         einkauf_total = einkauf_total or 0
 
+        # Umsätze summieren
         umsatz_total = c.execute(
             "SELECT SUM(amount) FROM umsatz"
         ).fetchone()[0] if _table_exists(c, "umsatz") else 0
         umsatz_total = umsatz_total or 0
 
-except Exception:
+except Exception as e:
+    # 🧠 Debug-Ausgabe, falls was schiefgeht:
+    st.warning(f"Fehler beim Laden der Betriebskennzahlen: {e}")
     last_inv = None
     artikel_count = 0
     einkauf_total = 0
