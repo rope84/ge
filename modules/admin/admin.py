@@ -763,7 +763,7 @@ def render_admin():
         with tabs[1]:
             _render_business_admin()
         with tabs[2]:
-            _render_user_admin()
+            _render_users_admin()
         with tabs[3]:
             _render_fixcost_admin()
         with tabs[4]:
