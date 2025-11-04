@@ -1,15 +1,18 @@
+# modules/import_items.py
 import streamlit as st
 import pandas as pd
 import re
 import json
 import datetime
-from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 from core.db import conn
 from core.ui_theme import section_title
 
+# ====================== Small utils ======================
+
 def _f(val, default=0.0) -> float:
+    """Robuste float-Konvertierung (None/''/NaN -> default)."""
     try:
         if val is None:
             return float(default)
@@ -20,19 +23,33 @@ def _f(val, default=0.0) -> float:
             out = float(v)
         else:
             out = float(val)
-        # NaN abfangen
-        if pd.isna(out) or (out != out):  # NaN check
+        if pd.isna(out) or (out != out):
             return float(default)
         return out
     except Exception:
         return float(default)
 
-# ---------------------- DB: items & Kategorien (meta) ----------------------
+def _box(title: str, body_md: str):
+    st.markdown(
+        f"""
+        <div style="
+            padding:14px 16px; border-radius:14px;
+            background:rgba(255,255,255,0.03);
+            box-shadow:0 6px 16px rgba(0,0,0,0.20);
+            border:1px solid rgba(255,255,255,0.06);
+            ">
+            <div style="font-weight:600; margin-bottom:6px;">{title}</div>
+            <div style="font-size:13px; opacity:0.95;">{body_md}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# ====================== DB: items & Kategorien ======================
 
 def _ensure_items_table():
     with conn() as cn:
         c = cn.cursor()
-        # Tabelle (falls nicht vorhanden)
         c.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +65,6 @@ def _ensure_items_table():
         # Spalten prüfen (Migration)
         c.execute("PRAGMA table_info(items)")
         cols = {row[1] for row in c.fetchall()}
-
         expected = {
             "name":           "TEXT NOT NULL",
             "unit_amount":    "REAL NOT NULL DEFAULT 0",
@@ -62,18 +78,17 @@ def _ensure_items_table():
             if col not in cols:
                 c.execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
 
-        # Nulls auffüllen (wichtig gegen NOT NULL-Fehler)
+        # Nulls abfangen
         c.execute("UPDATE items SET stock_qty=0 WHERE stock_qty IS NULL")
         c.execute("UPDATE items SET purchase_price=0 WHERE purchase_price IS NULL")
         c.execute("UPDATE items SET created_at = datetime('now') WHERE created_at IS NULL OR created_at=''")
 
-        # Eindeutigkeitsindex
         c.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_items_unique
         ON items(name, unit_amount, unit)
         """)
 
-        # Meta für Kategorien (falls nicht vorhanden)
+        # Meta für Kategorien
         c.execute("""
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
@@ -94,6 +109,7 @@ def _ensure_items_table():
                 (json.dumps(default, ensure_ascii=False),)
             )
         cn.commit()
+
 def _get_categories() -> List[Dict]:
     with conn() as cn:
         c = cn.cursor()
@@ -111,9 +127,8 @@ def _save_categories(cats: List[Dict]):
         c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('item_categories', ?)", (json.dumps(cats, ensure_ascii=False),))
         cn.commit()
 
-# ---------------------- Header-Mapping & Parsing ----------------------
+# ====================== Import: Mapping & Parsing ======================
 
-# Synonyme für Spalten-Erkennung
 SYNONYMS = {
     "name": ["artikel","produkt","bezeichnung","item","name","artikelname","produktname","titel"],
     "unit": ["einheit","unit","maßeinheit","measure","uom"],
@@ -133,32 +148,21 @@ def _guess_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
             if n in [_normalize(x) for x in syns]:
                 mapping[logical] = col
                 break
-    # Minimal: Name muss irgendwie gefunden werden – fallback: erste Spalte
     if mapping["name"] is None and len(df.columns) > 0:
         mapping["name"] = list(df.columns)[0]
     return mapping
 
-# Einheit-Parsing: z. B. "Coca Cola 0,2l", "Soda 1/8", "Wasser 500ml"
-_FRACTIONS = {
-    "1/16": 1.0/16.0,
-    "1/8": 1.0/8.0,
-    "1/4": 0.25,
-    "1/2": 0.5,
-}
+_FRACTIONS = {"1/16": 1.0/16.0, "1/8": 1.0/8.0, "1/4": 0.25, "1/2": 0.5}
 
 def _parse_unit_from_name(name: str) -> Tuple[str, float, str]:
     """
-    Liefert (clean_name, unit_amount, unit).
-    Erkennt Muster wie:
-      - "0,2l" / "0.2 l" / "500ml"
-      - "2cl", "4 cl"
-      - "1/8", "1/4" -> Liter
-    Entfernt die Einheitsangabe aus dem Namen.
+    Liefert (clean_name, unit_amount, unit) – erkennt '0,2l', '2cl', '500ml', '1/8' etc.
+    Einheit wird nach Möglichkeit auf 'l' normalisiert (ml/cl -> l).
     """
     raw = name
     n = name.strip()
 
-    # Fraktionen (1/8, 1/4, ...)
+    # Fraktionen (1/16, 1/8, ...)
     m = re.search(r'(\b1/16\b|\b1/8\b|\b1/4\b|\b1/2\b)', n, flags=re.IGNORECASE)
     if m:
         frac = m.group(1)
@@ -166,8 +170,7 @@ def _parse_unit_from_name(name: str) -> Tuple[str, float, str]:
         clean = re.sub(re.escape(frac), "", n, flags=re.IGNORECASE).strip(" -–()")
         return (clean.strip(), float(amt), "l")
 
-    # Klassisch: Zahl + Einheit
-    # Beispiele: "0,2l", "0.33 l", "500ml", "4 cl"
+    # Zahl + Einheit (l/cl/ml)
     m = re.search(r'(\d+[.,]?\d*)\s*(l|cl|ml)\b', n, flags=re.IGNORECASE)
     if m:
         num = m.group(1).replace(",", ".")
@@ -176,22 +179,16 @@ def _parse_unit_from_name(name: str) -> Tuple[str, float, str]:
             val = float(num)
         except Exception:
             val = 0.0
-
-        # ml->l, cl->l normalisieren
         if unit == "ml":
-            amt = val / 1000.0
-            unit_out = "l"
+            amt = val / 1000.0; unit_out = "l"
         elif unit == "cl":
-            amt = val / 100.0
-            unit_out = "l"
+            amt = val / 100.0;  unit_out = "l"
         else:
-            amt = val
-            unit_out = "l"
-
+            amt = val;          unit_out = "l"
         clean = re.sub(re.escape(m.group(0)), "", n, flags=re.IGNORECASE).strip(" -–()")
         return (clean.strip(), float(amt), unit_out)
 
-    # nichts gefunden -> 0 l
+    # nichts erkannt
     return (raw.strip(), 0.0, "")
 
 def _auto_category(name: str, cats: List[Dict]) -> Optional[str]:
@@ -207,7 +204,7 @@ def _auto_category(name: str, cats: List[Dict]) -> Optional[str]:
             break
     return best
 
-# ---------------------- Workflow State ----------------------
+# ====================== Import-Workflow State ======================
 
 def _get_state():
     s = st.session_state
@@ -217,36 +214,18 @@ def _get_state():
     s.setdefault("imp_step", 1)  # 1 Upload/Mapping, 2 Prüfen/Bearbeiten, 3 Speichern
     return s
 
-# ---------------------- UI: Karten/Boxen ----------------------
-
-def _box(title: str, body_md: str):
-    st.markdown(
-        f"""
-        <div style="
-            padding:14px 16px; border-radius:14px;
-            background:rgba(255,255,255,0.03);
-            box-shadow:0 6px 16px rgba(0,0,0,0.20);
-            border:1px solid rgba(255,255,255,0.06);
-            ">
-            <div style="font-weight:600; margin-bottom:6px;">{title}</div>
-            <div style="font-size:13px; opacity:0.95;">{body_md}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-# ---------------------- Schritt 1: Upload & Mapping ----------------------
+# ====================== Schritt 1: Upload & Mapping ======================
 
 def _step_upload_and_map():
     section_title("📥 Artikel-Import – Datei hochladen & Spalten zuordnen")
 
     hint = """
     **Erwartete Felder (logisch):**
-    - Artikel **(Pflicht)** – z. B. *Coca Cola 0,2l*  
-    - Einheit *(optional)* – wenn nicht vorhanden, wird aus dem Namen geparst  
-    - Menge *(optional)* – Lager/Inventurstand; Standard = 0  
-    - Einkaufspreis *(optional)* – Netto EK; Standard = 0  
-    - Kategorie *(optional)* – z. B. *Alkoholfrei*, *Bier*, *Wein* …
+    - **Artikel (Pflicht)** – z. B. *Coca Cola 0,2l*  
+    - **Einheit (optional)** – wenn nicht vorhanden, wird aus dem Namen geparst  
+    - **Menge (optional)** – Lager/Inventurstand; Standard = 0  
+    - **Einkaufspreis (optional)** – Netto EK; Standard = 0  
+    - **Kategorie (optional)** – z. B. *Alkoholfrei*, *Bier*, *Wein* …
     """
     _box("Hinweis", hint)
 
@@ -254,7 +233,6 @@ def _step_upload_and_map():
     if not file:
         return None, None
 
-    # Lesen
     try:
         if file.name.lower().endswith(".csv"):
             df = pd.read_csv(file)
@@ -268,9 +246,8 @@ def _step_upload_and_map():
         st.warning("Die Datei ist leer.")
         return None, None
 
-    st.success(f"Datei geladen: {file.name} – {len(df)} Zeile(n), {len(df.columns)} Spalten")
+    st.success(f"Datei geladen: {file.name} – {len(df)} Zeile(n), {len(df.columns)} Spalten)")
 
-    # Spalten-Mapping
     guess = _guess_columns(df)
     st.markdown("**Spalten zuordnen**")
     cols = [None] + list(df.columns)
@@ -288,33 +265,23 @@ def _step_upload_and_map():
         st.error("Bitte mindestens die Spalte **Artikel** zuordnen.")
         return None, None
 
-    mapping = {
-        "name": name_col,
-        "unit": unit_col,
-        "stock_qty": qty_col,
-        "purchase_price": price_col,
-        "category": cat_col
-    }
-
+    mapping = {"name": name_col, "unit": unit_col, "stock_qty": qty_col, "purchase_price": price_col, "category": cat_col}
     return df, mapping
 
-# ---------------------- Schritt 2: Bereinigen & Bearbeiten ----------------------
+# ====================== Schritt 2: Bereinigen & Bearbeiten ======================
 
 def _clean_dataframe(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.DataFrame:
     cats = _get_categories()
-
     out_rows = []
     for _, row in df.iterrows():
         raw_name = str(row[mapping["name"]]) if mapping["name"] else ""
         if not raw_name or str(raw_name).strip() == "":
             continue
 
-        # Einheit aus eigener Spalte?
         unit_from_col = None
         if mapping["unit"]:
             unit_from_col = str(row[mapping["unit"]]) if not pd.isna(row[mapping["unit"]]) else None
 
-        # Menge/Bestand
         qty = 0.0
         if mapping["stock_qty"]:
             try:
@@ -322,7 +289,6 @@ def _clean_dataframe(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.
             except Exception:
                 qty = 0.0
 
-        # Preis
         price = 0.0
         if mapping["purchase_price"]:
             try:
@@ -330,36 +296,26 @@ def _clean_dataframe(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.
             except Exception:
                 price = 0.0
 
-        # Kategorie
         cat = None
         if mapping["category"]:
             val = row[mapping["category"]]
             cat = None if pd.isna(val) else str(val).strip() or None
 
-        # Einheit parsen
         clean_name, amt, unit = _parse_unit_from_name(raw_name)
 
-        # Falls eigene Einheitsspalte gesetzt ist & sinnvoll wirkt, nutze diese priorisiert
         if unit_from_col and str(unit_from_col).strip():
-            # Versuche Werte wie "0,2l", "4 cl", "500 ml" etc.
             c2, amt2, unit2 = _parse_unit_from_name(str(unit_from_col))
-            # Falls _parse_unit_from_name die Zeichenkette praktisch "nicht" parsen konnte
-            # (z. B. "Stk"), versuchen wir einfache Zuordnung:
             if unit2 == "" and c2 == unit_from_col:
                 txt = str(unit_from_col).strip().lower()
-                # beliebte Kurzformen:
                 if re.search(r'\d', txt):
-                    # enthält Zahlen, trotzdem nochmal Regex:
                     c3, amt3, unit3 = _parse_unit_from_name(txt)
                     if unit3 != "":
                         amt, unit = amt3, unit3
                 else:
-                    # keine Zahl -> Einheit ohne Menge (e.g. "Stk")
                     amt, unit = (1.0, txt)
             else:
                 amt, unit = amt2, unit2
 
-        # Auto-Kategorie bei Bedarf
         if not cat:
             cat = _auto_category(clean_name, cats)
 
@@ -377,8 +333,6 @@ def _clean_dataframe(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.
 def _step_review_and_edit(clean_df: pd.DataFrame) -> pd.DataFrame:
     section_title("🧹 Prüfen & Bearbeiten")
     st.caption("Du kannst die Daten hier direkt anpassen (Name, Einheit, Menge, Einkaufspreis, Kategorie).")
-
-    # Data Editor – mit etwas angenehmer Höhe
     edited = st.data_editor(
         clean_df,
         use_container_width=True,
@@ -396,7 +350,7 @@ def _step_review_and_edit(clean_df: pd.DataFrame) -> pd.DataFrame:
     )
     return edited
 
-# ---------------------- Schritt 3: Speichern ----------------------
+# ====================== Schritt 3: Speichern ======================
 
 def _upsert_items(rows: List[Dict]):
     """Upsert (name, unit_amount, unit) → update stock_qty, purchase_price, category, created_at."""
@@ -446,15 +400,13 @@ def _step_save_to_db(clean_df: pd.DataFrame):
         except Exception as e:
             st.error(f"Fehler beim Speichern: {e}")
 
-# ---------------------- Kategorien verwalten ----------------------
+# ====================== Kategorien verwalten ======================
 
 def _render_categories_admin():
     section_title("🏷️ Kategorien verwalten")
     cats = _get_categories()
-
     st.caption("Definiere Kategorien und optionale Schlüsselwörter für die automatische Zuordnung beim Import.")
 
-    # Editorfreundliche Darstellung
     df = pd.DataFrame([
         {"Kategorie": c.get("name",""), "Keywords (kommagetrennt)": ", ".join(c.get("keywords", []))}
         for c in cats
@@ -479,23 +431,212 @@ def _render_categories_admin():
         _save_categories(new_cats)
         st.success("Kategorien gespeichert.")
 
-# ---------------------- Öffentliche Render-Funktion ----------------------
+# ====================== Artikel verwalten (NEU) ======================
+
+def _list_items(q: str = "", cat: str = "") -> pd.DataFrame:
+    _ensure_items_table()
+    with conn() as cn:
+        c = cn.cursor()
+        sql = "SELECT id, name, unit_amount, unit, stock_qty, purchase_price, category, created_at FROM items"
+        params = []
+        where = []
+        if q:
+            where.append("(LOWER(name) LIKE ? OR LOWER(category) LIKE ?)")
+            ql = f"%{q.lower()}%"
+            params += [ql, ql]
+        if cat and cat != "— alle —":
+            where.append("(category = ?)")
+            params.append(cat)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY LOWER(name)"
+        rows = c.execute(sql, params).fetchall()
+    df = pd.DataFrame(rows, columns=["id","name","unit_amount","unit","stock_qty","purchase_price","category","created_at"])
+    return df
+
+def _upsert_single_item(item: Dict):
+    _ensure_items_table()
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        name = (item.get("name") or "").strip()
+        if not name:
+            return
+        ua = _f(item.get("unit_amount"), 0.0)
+        un = (item.get("unit") or "").strip()
+        sq = _f(item.get("stock_qty"), 0.0)
+        pp = _f(item.get("purchase_price"), 0.0)
+        cat = (item.get("category") or "").strip() or None
+
+        ex = c.execute("SELECT id FROM items WHERE name=? AND unit_amount=? AND unit=?", (name, ua, un)).fetchone()
+        if ex:
+            c.execute(
+                "UPDATE items SET stock_qty=?, purchase_price=?, category=? WHERE id=?",
+                (sq, pp, cat, ex[0])
+            )
+        else:
+            c.execute(
+                "INSERT INTO items(name, unit_amount, unit, stock_qty, purchase_price, category, created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (name, ua, un, sq, pp, cat, now_iso)
+            )
+        cn.commit()
+
+def _delete_items(ids: List[int]):
+    if not ids:
+        return
+    with conn() as cn:
+        c = cn.cursor()
+        c.executemany("DELETE FROM items WHERE id=?", [(i,) for i in ids])
+        cn.commit()
+
+def _adjust_stock(item_id: int, delta: float):
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("UPDATE items SET stock_qty = COALESCE(stock_qty,0) + ? WHERE id=?", (float(delta), int(item_id)))
+        cn.commit()
+
+def _render_items_admin():
+    section_title("📦 Artikel verwalten")
+
+    cats = _get_categories()
+    cat_names = ["— alle —"] + [c["name"] for c in cats]
+
+    # Filterleiste
+    f1, f2, f3 = st.columns([3, 2, 2])
+    q = f1.text_input("Suche (Name/Kategorie)", value=st.session_state.get("items_q", ""))
+    flt_cat = f2.selectbox("Kategorie-Filter", cat_names, index=0)
+    st.session_state["items_q"] = q
+
+    df = _list_items(q, flt_cat)
+    st.caption(f"{len(df)} Artikel gefunden")
+
+    # Bearbeiten (Data Editor)
+    _box("Bearbeiten", "Ändere Felder direkt in der Tabelle und klicke anschließend auf **Änderungen speichern**.")
+    edited = st.data_editor(
+        df[["id","name","unit_amount","unit","stock_qty","purchase_price","category"]],
+        use_container_width=True,
+        height=min(600, 120 + 28 * max(3, len(df))),
+        key="items_editor",
+        hide_index=True,
+        column_config={
+            "id": {"header": "ID", "disabled": True},
+            "name": {"header": "Artikel"},
+            "unit_amount": {"header": "Menge (Einheit)"},
+            "unit": {"header": "Einheit"},
+            "stock_qty": {"header": "Bestand"},
+            "purchase_price": {"header": "EK netto (€)"},
+            "category": {"header": "Kategorie"},
+        }
+    )
+
+    c_save, c_del = st.columns([2,1])
+
+    # Änderungen speichern
+    if c_save.button("💾 Änderungen speichern", type="primary", use_container_width=True):
+        try:
+            for _, row in edited.iterrows():
+                _upsert_single_item({
+                    "name": row.get("name"),
+                    "unit_amount": row.get("unit_amount"),
+                    "unit": row.get("unit"),
+                    "stock_qty": row.get("stock_qty"),
+                    "purchase_price": row.get("purchase_price"),
+                    "category": row.get("category"),
+                })
+            st.success("Änderungen gespeichert.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Fehler beim Speichern: {e}")
+
+    # Löschen (multiselect + confirm)
+    with c_del:
+        with st.expander("🗑️ Löschen", expanded=False):
+            if len(df) > 0:
+                labels = {int(r.id): f"{r.name} ({r.unit_amount:g} {r.unit})" for _, r in df.iterrows()}
+                to_del = st.multiselect("Artikel wählen", options=list(labels.keys()), format_func=lambda i: labels[i])
+                confirm = st.checkbox("Löschen bestätigen")
+                if st.button("Ausgewählte löschen", disabled=not (to_del and confirm)):
+                    try:
+                        _delete_items([int(x) for x in to_del])
+                        st.success("Artikel gelöscht.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Löschen: {e}")
+            else:
+                st.caption("Keine Artikel in der Auswahl.")
+
+    # Schnell-Adjust (+/-)
+    with st.expander("⚡ Schnell ändern (+/− Bestand)", expanded=False):
+        st.caption("Für die ersten 20 Treffer – Menge je Klick in 'Schrittweite' festlegen.")
+        step = st.number_input("Schrittweite", min_value=0.1, step=0.1, value=1.0)
+        subset = df.head(20)
+        for _, r in subset.iterrows():
+            col_a, col_b, col_c, col_d = st.columns([4, 1, 1, 2])
+            col_a.markdown(f"**{r.name}** – {r.unit_amount:g} {r.unit}  |  Bestand: {r.stock_qty:g}")
+            if col_b.button("−", key=f"minus_{r.id}"):
+                try:
+                    _adjust_stock(int(r.id), -float(step))
+                    st.success(f"−{step:g} angewendet")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler: {e}")
+            if col_c.button("+", key=f"plus_{r.id}"):
+                try:
+                    _adjust_stock(int(r.id), float(step))
+                    st.success(f"+{step:g} angewendet")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler: {e}")
+            col_d.caption(f"ID: {int(r.id)}")
+
+    st.markdown("---")
+
+    # Neuer Artikel
+    _box("Neuen Artikel anlegen", "Upsert-Logik: existiert *Name + Menge + Einheit*, wird aktualisiert – sonst neu angelegt.")
+    a1, a2, a3 = st.columns([3, 1, 1])
+    n_name = a1.text_input("Artikelname")
+    n_amt  = a2.number_input("Menge (Einheit)", min_value=0.0, step=0.1, value=0.0)
+    n_unit = a3.text_input("Einheit", value="l")
+
+    b1, b2, b3 = st.columns([1, 1, 2])
+    n_stock = b1.number_input("Bestand", min_value=0.0, step=0.1, value=0.0)
+    n_price = b2.number_input("EK netto (€)", min_value=0.0, step=0.01, value=0.0)
+    # Kategorie aus Liste oder frei
+    cat_ops = [""] + [c["name"] for c in cats]
+    n_cat = b3.selectbox("Kategorie", options=cat_ops, index=0)
+
+    if st.button("➕ Artikel speichern", use_container_width=True):
+        try:
+            _upsert_single_item({
+                "name": n_name,
+                "unit_amount": n_amt,
+                "unit": n_unit,
+                "stock_qty": n_stock,
+                "purchase_price": n_price,
+                "category": n_cat or None,
+            })
+            st.success("Artikel gespeichert.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Fehler beim Speichern: {e}")
+
+# ====================== Öffentliche Render-Funktion ======================
 
 def render_data_tools():
     """
     Wird von admin.py (Tab „📦 Daten“) aufgerufen.
-    Bietet zwei Unterbereiche: Import & Kategorien – ohne Sidebar.
+    Bietet drei Unterbereiche: Import, Kategorien, Artikel – ohne Sidebar.
     """
     _ensure_items_table()
 
-    tabs = st.tabs(["⬆️ Import", "🏷️ Kategorien"])
+    tabs = st.tabs(["⬆️ Import", "🏷️ Kategorien", "📦 Artikel"])
+    # Import
     with tabs[0]:
         state = _get_state()
-
         if state.imp_step == 1:
             df, mapping = _step_upload_and_map()
             if df is not None and mapping is not None:
-                # Sanity: name muss zugeordnet sein
                 if mapping["name"] is None:
                     st.error("Bitte eine Spalte für **Artikel** wählen.")
                 else:
@@ -536,5 +677,10 @@ def render_data_tools():
                 st.session_state.imp_step = 1
                 st.rerun()
 
+    # Kategorien
     with tabs[1]:
         _render_categories_admin()
+
+    # Artikel
+    with tabs[2]:
+        _render_items_admin()
