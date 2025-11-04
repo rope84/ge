@@ -18,16 +18,33 @@ def go_to_profile():
 setup_db()
 seed_admin_if_empty()
 
-# ---------------- Dynamic Module Import ----------------
+# ---------------- Dynamic Module Import (with hot reload) ----------------
+import importlib, sys, os, inspect, datetime
+from pathlib import Path
+
 def import_modules():
     modules, errors = {}, {}
+    loaded_meta = {}  # nur fürs Debugging
 
     def try_import(qualified_name: str):
         base = qualified_name.split(".")[-1]  # z.B. "start" aus "modules.start"
         try:
-            mod = __import__(qualified_name, fromlist=["*"])
+            # 1) Immer importieren
+            mod = importlib.import_module(qualified_name)
+            # 2) Immer reloaden (erzwingt Hot-Reload während der Streamlit-Session)
+            mod = importlib.reload(mod)
+
+            # 3) Render-Funktion auflösen
             fn = getattr(mod, f"render_{base}")  # erwartet z.B. render_start()
             modules[base] = fn
+
+            # 4) Debug-Metadaten (Dateipfad, mtime)
+            file_path = Path(inspect.getfile(mod))
+            loaded_meta[base] = {
+                "file": str(file_path),
+                "mtime": datetime.datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(sep=" ", timespec="seconds"),
+                "qualified": qualified_name,
+            }
         except Exception as e:
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
@@ -35,9 +52,10 @@ def import_modules():
     for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
         try_import(f"modules.{mod_name}")
 
-    return modules, errors
+    # damit wir in route() debuggen können
+    return modules, errors, loaded_meta
 
-modules, import_errors = import_modules()
+modules, import_errors, import_meta = import_modules()
 
 # ---------------- Session Init ----------------
 def init_session():
@@ -187,17 +205,21 @@ def route():
                 mod_func(st.session_state.username or "unknown")
         elif mod_key == "profile":
             mod_func(st.session_state.username or "")
-        elif mod_key == "admin":
+                elif mod_key == "admin":
             if st.session_state.role != "admin":
                 st.error("Kein Zugriff. Adminrechte erforderlich.")
             else:
-                mod_func()
-        else:
-            st.error(f"Seite nicht implementiert: {mod_key}")
-    except Exception:
-        st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
-        st.code(traceback.format_exc(), language="text")
+                # --- Sichtbares Debug: zeigt dir genau, welches Modul wirklich geladen ist ---
+                info = import_meta.get("admin", {})
+                if info:
+                    st.caption(f"🛠 Admin Loader: {info.get('qualified','?')}")
+                    st.caption(f"📄 Datei: {info.get('file','?')}")
+                    st.caption(f"⏱ mtime: {info.get('mtime','?')}")
+                else:
+                    st.caption("⚠️ Keine Admin-Import-Metadaten gefunden.")
 
+                # Rendern
+                mod_func()
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
