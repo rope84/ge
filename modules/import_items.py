@@ -14,7 +14,7 @@ from core.ui_theme import section_title
 def _ensure_items_table():
     with conn() as cn:
         c = cn.cursor()
-        # Haupttabelle items – möglichst kompatibel halten
+        # Basis-Tabelle (nur falls noch nicht da)
         c.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,14 +24,36 @@ def _ensure_items_table():
             stock_qty REAL NOT NULL DEFAULT 0,
             purchase_price REAL NOT NULL DEFAULT 0,
             category TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT
         )
         """)
-        # Eindeutigkeit: Name + (Menge, Einheit)
+        # Spalten prüfen (Migration alter Schemas)
+        c.execute("PRAGMA table_info(items)")
+        cols = {row[1] for row in c.fetchall()}
+
+        expected = {
+            "name":           "TEXT NOT NULL",
+            "unit_amount":    "REAL NOT NULL DEFAULT 0",
+            "unit":           "TEXT NOT NULL DEFAULT ''",
+            "stock_qty":      "REAL NOT NULL DEFAULT 0",
+            "purchase_price": "REAL NOT NULL DEFAULT 0",
+            "category":       "TEXT",
+            # created_at OHNE NOT NULL, wir setzen es aktiv beim Insert/Update
+            "created_at":     "TEXT"
+        }
+        for col, decl in expected.items():
+            if col not in cols:
+                c.execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
+
+        # vorhandene NULL/leer bei created_at auffüllen
+        c.execute("UPDATE items SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''")
+
+        # Eindeutigkeit
         c.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_items_unique
         ON items(name, unit_amount, unit)
         """)
+
         # Kategorien-Store in meta
         c.execute("""
         CREATE TABLE IF NOT EXISTS meta (
@@ -39,7 +61,6 @@ def _ensure_items_table():
             value TEXT
         )
         """)
-        # Default-Kategorien, falls leer
         have = c.execute("SELECT value FROM meta WHERE key='item_categories'").fetchone()
         if not have:
             default = [
@@ -357,8 +378,9 @@ def _step_review_and_edit(clean_df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------- Schritt 3: Speichern ----------------------
 
 def _upsert_items(rows: List[Dict]):
-    """Upsert (name, unit_amount, unit) → update stock_qty, purchase_price, category."""
+    """Upsert (name, unit_amount, unit) → update stock_qty, purchase_price, category, created_at."""
     _ensure_items_table()
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
     with conn() as cn:
         c = cn.cursor()
         for r in rows:
@@ -371,21 +393,28 @@ def _upsert_items(rows: List[Dict]):
             pp = float(r.get("purchase_price") or 0.0)
             cat = (r.get("category") or "").strip() or None
 
-            # existiert?
             ex = c.execute(
-                "SELECT id FROM items WHERE name=? AND unit_amount=? AND unit=?",
+                "SELECT id, created_at FROM items WHERE name=? AND unit_amount=? AND unit=?",
                 (name, ua, un)
             ).fetchone()
+
             if ex:
+                # Update Kernfelder
                 c.execute(
                     "UPDATE items SET stock_qty=?, purchase_price=?, category=? WHERE id=?",
                     (sq, pp, cat, ex[0])
                 )
-            else:
-                # created_at NICHT NULL – Default greift durch DEFAULT (datetime('now'))
+                # created_at sicher auffüllen, falls leer
                 c.execute(
-                    "INSERT INTO items(name, unit_amount, unit, stock_qty, purchase_price, category) VALUES(?,?,?,?,?,?)",
-                    (name, ua, un, sq, pp, cat)
+                    "UPDATE items SET created_at=? WHERE id=? AND (created_at IS NULL OR created_at='')",
+                    (now_iso, ex[0])
+                )
+            else:
+                # Insert MIT created_at
+                c.execute(
+                    "INSERT INTO items(name, unit_amount, unit, stock_qty, purchase_price, category, created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (name, ua, un, sq, pp, cat, now_iso)
                 )
         cn.commit()
 
