@@ -1,1 +1,1 @@
-from modules.admin.admin import render_admin
+from modules.admin import render_admin
