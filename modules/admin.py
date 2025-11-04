@@ -57,7 +57,7 @@ def _ensure_tables():
         if "functions" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
         if "created_at" not in user_cols:
-            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
+    c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
 
         # --- FUNKTIONSKATALOG ---
         c.execute("""
