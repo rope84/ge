@@ -36,13 +36,20 @@ def _ensure_user_schema():
                 created_at TEXT
             )
         """)
+        # Migration
         c.execute("PRAGMA table_info(users)")
         cols = {row[1] for row in c.fetchall()}
         if "functions" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+        if "passhash" not in cols:
+            # wichtig: NOT NULL **mit** DEFAULT, sonst schlägt ALTER TABLE fehl
+            c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
         if "created_at" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
-        c.execute("UPDATE users SET created_at=datetime('now') WHERE created_at IS NULL")
+
+        # Normalisieren / Backfill
+        c.execute("UPDATE users SET passhash = COALESCE(passhash, '')")
+        c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
         cn.commit()
 
 def _ensure_function_schema():
@@ -162,26 +169,29 @@ def _tab_create_user():
         password = st.text_input("Passwort (optional)", type="password")
 
         if st.form_submit_button("👤 User anlegen", use_container_width=True):
-            if not username:
-                st.warning("Benutzername ist erforderlich.")
-                return
+    if not username:
+        st.warning("Benutzername ist erforderlich.")
+        return
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            c.execute("""
+                INSERT INTO users (username, email, first_name, last_name, role, functions, passhash)
+                VALUES (?,?,?,?,?,?,?)
+            """, (username, email, first_name, last_name, role, ", ".join(selected_funcs), ""))
+            cn.commit()
+
+        # Passwort (optional) setzen – hash via core.auth.change_password
+        if password and change_password:
             try:
-                with conn() as cn:
-                    c = cn.cursor()
-                    c.execute("""
-                        INSERT INTO users (username, email, first_name, last_name, role, functions)
-                        VALUES (?,?,?,?,?,?)
-                    """, (username, email, first_name, last_name, role, ", ".join(selected_funcs)))
-                    cn.commit()
-                if password and change_password:
-                    try:
-                        change_password(username, password)
-                    except Exception:
-                        pass
-                st.success(f"User '{username}' angelegt.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Fehler beim Anlegen: {e}")
+                change_password(username, password)
+            except Exception:
+                pass
+
+        st.success(f"User '{username}' angelegt.")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Fehler beim Anlegen: {e}")
 
 # ------------------------------------------------------------
 # TAB 3 – SUCHEN & BEARBEITEN
