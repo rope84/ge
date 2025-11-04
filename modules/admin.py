@@ -263,42 +263,35 @@ def _render_home():
     db_size = _db_size_mb()
     num_tables, total_rows = _db_table_stats()
 
-    # Betriebskennzahlen
-try:
-    with conn() as cn:
-        c = cn.cursor()
-
-        # Letzte Inventur
-        last_inv = c.execute(
-            "SELECT MAX(created_at) FROM inventur"
-        ).fetchone()[0] if _table_exists(c, "inventur") else None
-
-        # ✅ Artikel aus Artikelstamm (items)
-        artikel_count = c.execute(
-            "SELECT COUNT(*) FROM items"
-        ).fetchone()[0] if _table_exists(c, "items") else 0
-
-        # Einkaufspreise summieren
-        einkauf_total = c.execute(
-            "SELECT SUM(purchase_price) FROM items"
-        ).fetchone()[0] if _table_exists(c, "items") else 0
-        einkauf_total = einkauf_total or 0
-
-        # Umsätze summieren
-        umsatz_total = c.execute(
-            "SELECT SUM(amount) FROM umsatz"
-        ).fetchone()[0] if _table_exists(c, "umsatz") else 0
-        umsatz_total = umsatz_total or 0
-
-except Exception as e:
-    # 🧠 Debug-Ausgabe, falls was schiefgeht:
-    st.warning(f"Fehler beim Laden der Betriebskennzahlen: {e}")
+    # Betriebskennzahlen (robust, ohne try/except-Schirm)
     last_inv = None
     artikel_count = 0
     einkauf_total = 0
     umsatz_total = 0
 
+    with conn() as cn:
+        c = cn.cursor()
+
+        # Letzte Inventur
+        if _table_exists(c, "inventur"):
+            row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
+            last_inv = row[0] if row and row[0] else None
+
+        # ✅ Artikel aus Artikelstamm (items)
+        if _table_exists(c, "items"):
+            row = c.execute("SELECT COUNT(*) FROM items").fetchone()
+            artikel_count = row[0] if row and row[0] else 0
+
+            row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
+            einkauf_total = row[0] if row and row[0] else 0
+
+        # Umsätze summieren
+        if _table_exists(c, "umsatz"):
+            row = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()
+            umsatz_total = row[0] if row and row[0] else 0
+
     wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
+
     last_inv_str = "—"
     if last_inv:
         try:
@@ -309,7 +302,7 @@ except Exception as e:
             except Exception:
                 last_inv_str = str(last_inv)
 
-    # Kapazität des Betriebs (neu)
+    # Kapazität des Betriebs (aus Meta)
     capacity_raw = _get_meta("business_capacity")
     capacity_str = (capacity_raw if capacity_raw and capacity_raw.strip() else "—")
 
@@ -374,7 +367,7 @@ except Exception as e:
     with c4:
         betriebs_lines = [
             f"Letzte Inventur: {last_inv_str}",
-            f"Artikel: {artikel_count}",
+            f"Artikel: {artikel_count}",           # <- hier steht jetzt die korrekte Anzahl der angelegten Artikel
             f"Fixkosten: {fix_cnt}",
             f"Personalstand: {emp_cnt}",
             f"Kapazität: {capacity_str} Pers.",
@@ -416,7 +409,6 @@ except Exception as e:
                 f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
                 unsafe_allow_html=True
             )
-
 
 # ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
