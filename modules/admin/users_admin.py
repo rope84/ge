@@ -21,6 +21,7 @@ PERM_COLS: List[Tuple[str, str]] = [
 ]
 
 def _ensure_user_schema():
+    """Erstellt oder migriert die users-Tabelle (ohne Rolle, nur Funktionen)."""
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
@@ -30,7 +31,6 @@ def _ensure_user_schema():
                 email TEXT,
                 first_name TEXT,
                 last_name TEXT,
-                role TEXT NOT NULL,
                 functions TEXT DEFAULT '',
                 passhash TEXT NOT NULL DEFAULT '',
                 created_at TEXT
@@ -51,6 +51,7 @@ def _ensure_user_schema():
         cn.commit()
 
 def _ensure_function_schema():
+    """Stellt sicher, dass alle Spalten für Rechte in 'functions' existieren."""
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
@@ -65,14 +66,10 @@ def _ensure_function_schema():
         for col_name, col_def in PERM_COLS:
             if col_name not in cols:
                 c.execute(f"ALTER TABLE functions ADD COLUMN {col_name} {col_def}")
+        # Nullwerte auffüllen
         set_expr = ", ".join([f"{col}=COALESCE({col},0)" for col, _ in PERM_COLS])
         c.execute(f"UPDATE functions SET {set_expr}")
         cn.commit()
-
-def _get_roles_counts():
-    with conn() as cn:
-        c = cn.cursor()
-        return c.execute("SELECT role, COUNT(*) FROM users GROUP BY role").fetchall()
 
 def _get_functions_list():
     with conn() as cn:
@@ -93,9 +90,7 @@ def _count_users_with_function(func_name: str) -> int:
 # ------------------------------------------------------------
 
 def _card_html(title: str, color: str, lines: List[str]) -> str:
-    body = "<br/>".join(
-        [f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines]
-    )
+    body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
     return f"""
     <div style="
         display:flex; gap:12px; align-items:flex-start;
@@ -116,34 +111,34 @@ def _card_html(title: str, color: str, lines: List[str]) -> str:
     """
 
 # ------------------------------------------------------------
-# TAB 1 – ÜBERSICHT (modernes Design)
+# TAB 1 – ÜBERSICHT
 # ------------------------------------------------------------
 
 def _tab_overview():
-    roles = _get_roles_counts()
-    total = sum([r[1] for r in roles]) if roles else 0
+    with conn() as cn:
+        c = cn.cursor()
+        funcs = c.execute("SELECT name FROM functions ORDER BY name").fetchall()
+        total_users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
     c1, c2, c3, c4 = st.columns(4, gap="large")
     c1.markdown(
-        _card_html("👥 Gesamt", "#3b82f6", [f"Alle Benutzer: <b>{total}</b>"]),
+        _card_html("👥 Gesamt", "#3b82f6", [f"Alle Benutzer: <b>{total_users}</b>"]),
         unsafe_allow_html=True,
     )
 
-    if roles:
-        for i, (role, count) in enumerate(sorted(roles, key=lambda x: x[0])):
-            color = {
-                "admin": "#ef4444",
-                "barlead": "#0ea5e9",
-                "user": "#10b981",
-                "inventur": "#f59e0b",
-            }.get(role.lower(), "#6b7280")
-            col = [c2, c3, c4, c1][i % 4]
-            col.markdown(
-                _card_html(role.capitalize(), color, [f"Benutzer: <b>{count}</b>"]),
-                unsafe_allow_html=True,
-            )
-    else:
-        st.info("Noch keine Benutzer vorhanden.")
+    for i, (fname,) in enumerate(funcs):
+        count = _count_users_with_function(fname)
+        color = {
+            "admin": "#ef4444",
+            "barlead": "#0ea5e9",
+            "inventur": "#f59e0b",
+            "user": "#10b981",
+        }.get(fname.lower(), "#6b7280")
+        col = [c2, c3, c4, c1][i % 4]
+        col.markdown(
+            _card_html(fname.capitalize(), color, [f"Benutzer: <b>{count}</b>"]),
+            unsafe_allow_html=True,
+        )
 
 # ------------------------------------------------------------
 # TAB 2 – USER ERSTELLEN
@@ -162,7 +157,6 @@ def _tab_create_user():
         first_name = c3.text_input("Vorname")
         last_name = c4.text_input("Nachname")
 
-        role = st.selectbox("Rolle", ["admin", "barlead", "user", "inventur"], index=2)
         selected_funcs = st.multiselect("Funktionen", func_list)
         password = st.text_input("Passwort (optional)", type="password")
 
@@ -174,12 +168,12 @@ def _tab_create_user():
                 with conn() as cn:
                     c = cn.cursor()
                     c.execute("""
-                        INSERT INTO users (username, email, first_name, last_name, role, functions, passhash)
-                        VALUES (?,?,?,?,?,?,?)
-                    """, (username, email, first_name, last_name, role, ", ".join(selected_funcs), ""))
+                        INSERT INTO users (username, email, first_name, last_name, functions, passhash)
+                        VALUES (?,?,?,?,?,?)
+                    """, (username, email, first_name, last_name, ", ".join(selected_funcs), ""))
                     cn.commit()
 
-                # Passwort (optional) setzen – hash via core.auth.change_password
+                # Passwort (optional)
                 if password and change_password:
                     try:
                         change_password(username, password)
@@ -220,15 +214,15 @@ def _search_users(q: str, alpha: str):
         if q:
             like = f"%{q}%"
             sql = """
-                SELECT id, username, email, first_name, last_name, role, functions
+                SELECT id, username, email, first_name, last_name, functions
                 FROM users
-                WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?
+                WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR functions LIKE ?
                 ORDER BY username
             """
-            return c.execute(sql, (like, like, like, like, like, like)).fetchall()
+            return c.execute(sql, (like, like, like, like, like)).fetchall()
         elif alpha:
             sql = """
-                SELECT id, username, email, first_name, last_name, role, functions
+                SELECT id, username, email, first_name, last_name, functions
                 FROM users
                 WHERE (first_name IS NOT NULL AND UPPER(SUBSTR(first_name,1,1)) = ?)
                    OR (last_name  IS NOT NULL AND UPPER(SUBSTR(last_name ,1,1)) = ?)
@@ -239,18 +233,14 @@ def _search_users(q: str, alpha: str):
         return []
 
 def _edit_user_card(row, func_list):
-    uid, uname, email, first, last, role, funcs = row
+    uid, uname, email, first, last, funcs = row
     with st.container(border=True):
-        st.markdown(f"**{uname}** · Rolle: `{role}`")
+        st.markdown(f"**{uname}**")
         c1, c2 = st.columns(2)
         e_first = c1.text_input("Vorname", first or "", key=f"ua_first_{uid}")
         e_last  = c2.text_input("Nachname", last or "", key=f"ua_last_{uid}")
         e_mail  = st.text_input("E-Mail", email or "", key=f"ua_mail_{uid}")
 
-        e_role = st.selectbox("Rolle", ["admin","barlead","user","inventur"],
-                              index=["admin","barlead","user","inventur"].index(role)
-                              if role in ["admin","barlead","user","inventur"] else 2,
-                              key=f"ua_role_{uid}")
         curr_funcs = [f.strip() for f in (funcs or "").split(",") if f.strip()]
         e_funcs = st.multiselect("Funktionen", func_list, default=curr_funcs, key=f"ua_funcs_{uid}")
 
@@ -259,8 +249,8 @@ def _edit_user_card(row, func_list):
             with conn() as cn:
                 c = cn.cursor()
                 c.execute("""
-                    UPDATE users SET first_name=?, last_name=?, email=?, role=?, functions=? WHERE id=?
-                """, (e_first, e_last, e_mail, e_role, ", ".join(e_funcs), uid))
+                    UPDATE users SET first_name=?, last_name=?, email=?, functions=? WHERE id=?
+                """, (e_first, e_last, e_mail, ", ".join(e_funcs), uid))
                 cn.commit()
             st.success("Änderungen gespeichert.")
             st.rerun()
@@ -276,7 +266,7 @@ def _edit_user_card(row, func_list):
 
 def _tab_search_edit():
     section_title("🔎 Suchen & Bearbeiten")
-    q = st.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)", key="ua_q")
+    q = st.text_input("Suchbegriff (Name, E-Mail, Funktionen …)", key="ua_q")
     alpha = _alpha_selector()
     results = _search_users(q.strip(), alpha)
     if not results:
