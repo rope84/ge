@@ -741,7 +741,7 @@ def render_admin():
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
     # 4) Tabs – Reihenfolge unverändert + neuer Tab „📦 Daten“
-        tabs = st.tabs([
+    tabs = st.tabs([
         "🏠 Übersicht",     # 0
         "🏢 Betrieb",       # 1
         "👤 Benutzer",      # 2
