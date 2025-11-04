@@ -214,15 +214,7 @@ def route():
             if st.session_state.role != "admin":
                 st.error("Kein Zugriff. Adminrechte erforderlich.")
             else:
-                # --- Sichtbares Debug: zeigt dir genau, welches Modul wirklich geladen ist ---
-                info = import_meta.get("admin", {})
-                if info:
-                    st.caption(f"🛠 Admin Loader: {info.get('qualified','?')}")
-                    st.caption(f"📄 Datei: {info.get('file','?')}")
-                    st.caption(f"⏱ mtime: {info.get('mtime','?')}")
-                else:
-                    st.caption("⚠️ Keine Admin-Import-Metadaten gefunden.")
-
+                
                 # Rendern
                 mod_func()
 
