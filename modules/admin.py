@@ -58,6 +58,7 @@ def _ensure_tables():
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
         if "created_at" not in user_cols:
     c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+    c.execute("UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL")
 
         # --- FUNKTIONSKATALOG ---
         c.execute("""
