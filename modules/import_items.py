@@ -9,12 +9,30 @@ from typing import Optional, Dict, List, Tuple
 from core.db import conn
 from core.ui_theme import section_title
 
+def _f(val, default=0.0) -> float:
+    try:
+        if val is None:
+            return float(default)
+        if isinstance(val, str):
+            v = val.strip().replace(",", ".")
+            if v == "":
+                return float(default)
+            out = float(v)
+        else:
+            out = float(val)
+        # NaN abfangen
+        if pd.isna(out) or (out != out):  # NaN check
+            return float(default)
+        return out
+    except Exception:
+        return float(default)
+
 # ---------------------- DB: items & Kategorien (meta) ----------------------
 
 def _ensure_items_table():
     with conn() as cn:
         c = cn.cursor()
-        # Basis-Tabelle (nur falls noch nicht da)
+        # Tabelle (falls nicht vorhanden)
         c.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,7 +45,7 @@ def _ensure_items_table():
             created_at TEXT
         )
         """)
-        # Spalten prüfen (Migration alter Schemas)
+        # Spalten prüfen (Migration)
         c.execute("PRAGMA table_info(items)")
         cols = {row[1] for row in c.fetchall()}
 
@@ -38,23 +56,24 @@ def _ensure_items_table():
             "stock_qty":      "REAL NOT NULL DEFAULT 0",
             "purchase_price": "REAL NOT NULL DEFAULT 0",
             "category":       "TEXT",
-            # created_at OHNE NOT NULL, wir setzen es aktiv beim Insert/Update
             "created_at":     "TEXT"
         }
         for col, decl in expected.items():
             if col not in cols:
                 c.execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
 
-        # vorhandene NULL/leer bei created_at auffüllen
-        c.execute("UPDATE items SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''")
+        # Nulls auffüllen (wichtig gegen NOT NULL-Fehler)
+        c.execute("UPDATE items SET stock_qty=0 WHERE stock_qty IS NULL")
+        c.execute("UPDATE items SET purchase_price=0 WHERE purchase_price IS NULL")
+        c.execute("UPDATE items SET created_at = datetime('now') WHERE created_at IS NULL OR created_at=''")
 
-        # Eindeutigkeit
+        # Eindeutigkeitsindex
         c.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_items_unique
         ON items(name, unit_amount, unit)
         """)
 
-        # Kategorien-Store in meta
+        # Meta für Kategorien (falls nicht vorhanden)
         c.execute("""
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
@@ -70,9 +89,11 @@ def _ensure_items_table():
                 {"name": "Schaumwein", "keywords": ["prosecco","sekt","champagner","frizzante"]},
                 {"name": "Spirituosen", "keywords": ["vodka","gin","rum","tequila","whisky","whiskey","likör","brandy","cognac"]},
             ]
-            c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('item_categories', ?)", (json.dumps(default, ensure_ascii=False),))
+            c.execute(
+                "INSERT OR REPLACE INTO meta(key,value) VALUES('item_categories', ?)",
+                (json.dumps(default, ensure_ascii=False),)
+            )
         cn.commit()
-
 def _get_categories() -> List[Dict]:
     with conn() as cn:
         c = cn.cursor()
@@ -387,10 +408,10 @@ def _upsert_items(rows: List[Dict]):
             name = (r.get("name") or "").strip()
             if not name:
                 continue
-            ua = float(r.get("unit_amount") or 0.0)
+            ua = _f(r.get("unit_amount"), 0.0)
             un = (r.get("unit") or "").strip()
-            sq = float(r.get("stock_qty") or 0.0)
-            pp = float(r.get("purchase_price") or 0.0)
+            sq = _f(r.get("stock_qty"), 0.0)
+            pp = _f(r.get("purchase_price"), 0.0)
             cat = (r.get("category") or "").strip() or None
 
             ex = c.execute(
@@ -399,18 +420,15 @@ def _upsert_items(rows: List[Dict]):
             ).fetchone()
 
             if ex:
-                # Update Kernfelder
                 c.execute(
                     "UPDATE items SET stock_qty=?, purchase_price=?, category=? WHERE id=?",
                     (sq, pp, cat, ex[0])
                 )
-                # created_at sicher auffüllen, falls leer
                 c.execute(
                     "UPDATE items SET created_at=? WHERE id=? AND (created_at IS NULL OR created_at='')",
                     (now_iso, ex[0])
                 )
             else:
-                # Insert MIT created_at
                 c.execute(
                     "INSERT INTO items(name, unit_amount, unit, stock_qty, purchase_price, category, created_at) "
                     "VALUES(?,?,?,?,?,?,?)",
