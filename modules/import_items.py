@@ -499,101 +499,110 @@ def _adjust_stock(item_id: int, delta: float):
 def _render_items_admin():
     section_title("📦 Artikel verwalten")
 
+    # Kategorien laden (für Filter + Dropdown)
     cats = _get_categories()
-    cat_names = ["— alle —"] + [c["name"] for c in cats]
+    cat_names = [c["name"] for c in cats]
+    cat_filter_options = ["— alle —"] + cat_names
 
     # Filterleiste
-    f1, f2, f3 = st.columns([3, 2, 2])
+    f1, f2 = st.columns([3, 2])
     q = f1.text_input("Suche (Name/Kategorie)", value=st.session_state.get("items_q", ""))
-    flt_cat = f2.selectbox("Kategorie-Filter", cat_names, index=0)
+    flt_cat = f2.selectbox("Kategorie-Filter", cat_filter_options, index=0)
     st.session_state["items_q"] = q
 
+    # Daten laden
     df = _list_items(q, flt_cat)
     st.caption(f"{len(df)} Artikel gefunden")
 
-    # Bearbeiten (Data Editor)
-    _box("Bearbeiten", "Ändere Felder direkt in der Tabelle und klicke anschließend auf **Änderungen speichern**.")
-    edited = st.data_editor(
-        df[["id","name","unit_amount","unit","stock_qty","purchase_price","category"]],
-        use_container_width=True,
-        height=min(600, 120 + 28 * max(3, len(df))),
-        key="items_editor",
-        hide_index=True,
-        column_config={
-            "id": {"header": "ID", "disabled": True},
-            "name": {"header": "Artikel"},
-            "unit_amount": {"header": "Menge (Einheit)"},
-            "unit": {"header": "Einheit"},
-            "stock_qty": {"header": "Bestand"},
-            "purchase_price": {"header": "EK netto (€)"},
-            "category": {"header": "Kategorie"},
-        }
-    )
+    # Nichts zu zeigen?
+    if df.empty:
+        _box("Hinweis", "Noch keine Artikel erfasst oder Filter zu eng. Du kannst unten neue Artikel anlegen.")
+    else:
+        # Editor-DataFrame vorbereiten:
+        # - ID als Index (versteckt), um Updates/Löschungen sauber zuordnen zu können
+        # - 'delete' Checkbox ganz links
+        work = df.copy()
+        work = work.set_index("id", drop=True)
+        if "delete" not in work.columns:
+            work["delete"] = False
 
-    c_save, c_del = st.columns([2,1])
+        display_cols = ["delete", "name", "unit_amount", "unit", "stock_qty", "purchase_price", "category"]
 
-    # Änderungen speichern
-    if c_save.button("💾 Änderungen speichern", type="primary", use_container_width=True):
-        try:
-            for _, row in edited.iterrows():
-                _upsert_single_item({
-                    "name": row.get("name"),
-                    "unit_amount": row.get("unit_amount"),
-                    "unit": row.get("unit"),
-                    "stock_qty": row.get("stock_qty"),
-                    "purchase_price": row.get("purchase_price"),
-                    "category": row.get("category"),
-                })
-            st.success("Änderungen gespeichert.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Fehler beim Speichern: {e}")
+        _box("Bearbeiten",
+             "Ändere Felder direkt in der Tabelle. "
+             "Mit der Checkbox **„Löschen“** kannst du mehrere Artikel zum Löschen markieren.")
 
-    # Löschen (multiselect + confirm)
-    with c_del:
-        with st.expander("🗑️ Löschen", expanded=False):
-            if len(df) > 0:
-                labels = {int(r.id): f"{r.name} ({r.unit_amount:g} {r.unit})" for _, r in df.iterrows()}
-                to_del = st.multiselect("Artikel wählen", options=list(labels.keys()), format_func=lambda i: labels[i])
-                confirm = st.checkbox("Löschen bestätigen")
-                if st.button("Ausgewählte löschen", disabled=not (to_del and confirm)):
-                    try:
-                        _delete_items([int(x) for x in to_del])
-                        st.success("Artikel gelöscht.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Löschen: {e}")
-            else:
-                st.caption("Keine Artikel in der Auswahl.")
+        edited = st.data_editor(
+            work[display_cols],
+            use_container_width=True,
+            hide_index=True,  # ID bleibt unsichtbar als Index vorhanden
+            height=min(600, 120 + 28 * max(3, len(work))),
+            num_rows="dynamic",
+            column_config={
+                "delete": st.column_config.CheckboxColumn(
+                    "Löschen", help="Zum Löschen markieren"
+                ),
+                "name": st.column_config.TextColumn(
+                    "Artikel", required=True, help="Produktname, z. B. 'Coca Cola'"
+                ),
+                "unit_amount": st.column_config.NumberColumn(
+                    "Menge (Einheit)", step=0.1, format="%.3f", help="z. B. 0.2 für 0,2l"
+                ),
+                "unit": st.column_config.TextColumn(
+                    "Einheit", help="z. B. 'l', 'cl', 'ml', 'Stk'"
+                ),
+                "stock_qty": st.column_config.NumberColumn(
+                    "Bestand", step=0.1, format="%.3f"
+                ),
+                "purchase_price": st.column_config.NumberColumn(
+                    "EK netto (€)", step=0.01, format="%.2f"
+                ),
+                "category": st.column_config.SelectboxColumn(
+                    "Kategorie",
+                    options=[""] + cat_names,  # leere Option erlaubt
+                    help="Kategorie auswählen"
+                ),
+            }
+        )
 
-    # Schnell-Adjust (+/-)
-    with st.expander("⚡ Schnell ändern (+/− Bestand)", expanded=False):
-        st.caption("Für die ersten 20 Treffer – Menge je Klick in 'Schrittweite' festlegen.")
-        step = st.number_input("Schrittweite", min_value=0.1, step=0.1, value=1.0)
-        subset = df.head(20)
-        for _, r in subset.iterrows():
-            col_a, col_b, col_c, col_d = st.columns([4, 1, 1, 2])
-            col_a.markdown(f"**{r.name}** – {r.unit_amount:g} {r.unit}  |  Bestand: {r.stock_qty:g}")
-            if col_b.button("−", key=f"minus_{r.id}"):
-                try:
-                    _adjust_stock(int(r.id), -float(step))
-                    st.success(f"−{step:g} angewendet")
+        col_save, col_del = st.columns([2, 1])
+
+        # Änderungen speichern
+        if col_save.button("💾 Änderungen speichern", type="primary", use_container_width=True):
+            try:
+                # Für jede Zeile upserten (Upsert auf Name+Menge+Einheit – wie bisher)
+                for idx, row in edited.iterrows():
+                    _upsert_single_item({
+                        "name": row.get("name"),
+                        "unit_amount": row.get("unit_amount"),
+                        "unit": row.get("unit"),
+                        "stock_qty": row.get("stock_qty"),
+                        "purchase_price": row.get("purchase_price"),
+                        "category": row.get("category") or None,
+                    })
+                st.success("Änderungen gespeichert.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Fehler beim Speichern: {e}")
+
+        # Markierte löschen
+        if col_del.button("🗑️ Markierte löschen", use_container_width=True):
+            try:
+                to_delete_ids = [int(i) for i, r in edited.iterrows() if bool(r.get("delete"))]
+                if not to_delete_ids:
+                    st.info("Keine Artikel markiert.")
+                else:
+                    _delete_items(to_delete_ids)
+                    st.success(f"{len(to_delete_ids)} Artikel gelöscht.")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
-            if col_c.button("+", key=f"plus_{r.id}"):
-                try:
-                    _adjust_stock(int(r.id), float(step))
-                    st.success(f"+{step:g} angewendet")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
-            col_d.caption(f"ID: {int(r.id)}")
+            except Exception as e:
+                st.error(f"Fehler beim Löschen: {e}")
 
     st.markdown("---")
 
-    # Neuer Artikel
-    _box("Neuen Artikel anlegen", "Upsert-Logik: existiert *Name + Menge + Einheit*, wird aktualisiert – sonst neu angelegt.")
+    # ------- Artikel neu anlegen -------
+    _box("Artikel neu anlegen",
+         "Upsert-Logik: existiert **Name + Menge + Einheit**, wird aktualisiert – sonst neu angelegt.")
     a1, a2, a3 = st.columns([3, 1, 1])
     n_name = a1.text_input("Artikelname")
     n_amt  = a2.number_input("Menge (Einheit)", min_value=0.0, step=0.1, value=0.0)
@@ -602,9 +611,7 @@ def _render_items_admin():
     b1, b2, b3 = st.columns([1, 1, 2])
     n_stock = b1.number_input("Bestand", min_value=0.0, step=0.1, value=0.0)
     n_price = b2.number_input("EK netto (€)", min_value=0.0, step=0.01, value=0.0)
-    # Kategorie aus Liste oder frei
-    cat_ops = [""] + [c["name"] for c in cats]
-    n_cat = b3.selectbox("Kategorie", options=cat_ops, index=0)
+    n_cat = b3.selectbox("Kategorie", options=[""] + cat_names, index=0)
 
     if st.button("➕ Artikel speichern", use_container_width=True):
         try:
