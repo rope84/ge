@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from core.db import conn
 
-# --- kleine Card-Helper (ähnlicher Look wie im Admin-Cockpit) ---
+# --- Style-Helper (Card, Farben etc.) ---
 def _role_color(role: str) -> str:
     colors = {
         "admin": "#e11d48",
@@ -64,12 +64,13 @@ def _ensure_tables():
             )
         cn.commit()
 
+
 def render_users_admin():
     _ensure_tables()
 
     tabs = st.tabs(["📊 Übersicht", "👤 Benutzer", "🔍 Suchen & Bearbeiten", "⚙️ Funktionen"])
 
-    # ------------------- TAB 1: Übersicht -------------------
+    # ---------------- TAB 1: Übersicht ----------------
     with tabs[0]:
         with conn() as cn:
             c = cn.cursor()
@@ -84,7 +85,6 @@ def render_users_admin():
             def chunk(lst, n):
                 for i in range(0, len(lst), n):
                     yield lst[i:i+n]
-
             for group in chunk(rows, 4):
                 cols = st.columns(len(group))
                 for (role, count), col in zip(group, cols):
@@ -92,7 +92,7 @@ def render_users_admin():
         else:
             st.info("Noch keine Benutzer vorhanden.")
 
-    # ------------------- TAB 2: Nur neuen Benutzer anlegen -------------------
+    # ---------------- TAB 2: Benutzer anlegen ----------------
     with tabs[1]:
         st.subheader("Neuen Benutzer anlegen")
 
@@ -111,7 +111,7 @@ def render_users_admin():
             selected_funcs = st.multiselect("Funktionen", func_list)
             password = st.text_input("Passwort", type="password")
 
-            if st.form_submit_button("➕ User anlegen", use_container_width=True):
+            if st.form_submit_button("➕ User anlegen", use_container_width=True, key="create_user"):
                 if not username or not password:
                     st.warning("Benutzername und Passwort erforderlich.")
                 else:
@@ -128,14 +128,12 @@ def render_users_admin():
                     except Exception as e:
                         st.error(f"Fehler beim Anlegen: {e}")
 
-    # ------------------- TAB 3: Suchen & Bearbeiten -------------------
+    # ---------------- TAB 3: Suchen & Bearbeiten ----------------
     with tabs[2]:
         st.subheader("Benutzer suchen & bearbeiten")
 
         col1, col2 = st.columns([3, 2])
         query = col1.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)")
-
-        # A–Z Auswahl
         letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         selected_letter = col2.selectbox("Nach Anfangsbuchstaben filtern", ["—"] + letters)
 
@@ -144,13 +142,13 @@ def render_users_admin():
 
         if query:
             where_clause = """WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?"""
-            params = [f"%{query}%" for _ in range(6)]
+            params = [f"%{query}%"] * 6
         elif selected_letter and selected_letter != "—":
             letter = selected_letter + "%"
             where_clause = """WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"""
             params = [letter, letter, letter]
 
-        # Funktionsliste für Editor
+        # Funktionsliste laden
         with conn() as cn:
             c = cn.cursor()
             func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
@@ -166,66 +164,72 @@ def render_users_admin():
                 """, tuple(params)).fetchall()
 
             if results:
-                df = pd.DataFrame(
-                    results,
-                    columns=["ID","Benutzername","E-Mail","Vorname","Nachname","Rolle","Funktionen"]
-                )
-                st.dataframe(df.drop(columns=["ID"]), use_container_width=True, height=280)
+                usernames = [r[1] for r in results]
+                sel_user = st.selectbox("Benutzer auswählen", usernames)
 
-                st.markdown("---")
-                st.subheader("Ausgewählten Benutzer bearbeiten / löschen")
-
-                # Auswahl
-                sel_user = st.selectbox("Benutzer auswählen", df["Benutzername"])
                 if sel_user:
-                    row = df[df["Benutzername"] == sel_user].iloc[0]
-                    uid = int(row["ID"])
+                    row = next(r for r in results if r[1] == sel_user)
+                    uid, username, email, first, last, role, funcs = row
 
-                    # Bearbeitungsfelder
-                    e_cols1 = st.columns(2)
-                    e_email = e_cols1[0].text_input("E-Mail", row["E-Mail"])
-                    e_role  = e_cols1[1].selectbox(
-                        "Rolle",
-                        ["admin", "barlead", "user", "inventur"],
-                        index=["admin","barlead","user","inventur"].index(row["Rolle"]) if row["Rolle"] in ["admin","barlead","user","inventur"] else 2
-                    )
-                    e_cols2 = st.columns(2)
-                    e_first = e_cols2[0].text_input("Vorname", row["Vorname"] or "")
-                    e_last  = e_cols2[1].text_input("Nachname", row["Nachname"] or "")
-                    e_funcs = st.multiselect(
-                        "Funktionen",
-                        func_list,
-                        default=[f.strip() for f in (row["Funktionen"] or "").split(",") if f.strip()]
+                    st.markdown("---")
+                    st.markdown(
+                        f"""
+                        <div style='padding:16px; border-radius:12px; background:rgba(255,255,255,0.04);
+                        box-shadow:0 4px 12px rgba(0,0,0,0.2); margin-bottom:18px;'>
+                            <h4 style='margin:0;'>🧑‍💻 {username}</h4>
+                            <p style='margin-top:2px; opacity:0.8; font-size:13px;'>
+                                Rolle: <b>{role}</b> &nbsp; | &nbsp; Angelegt am: <i>{uid}</i>
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True
                     )
 
-                    save_col, del_col = st.columns([2,1])
+                    with st.form(f"edit_user_{uid}"):
+                        e1, e2 = st.columns(2)
+                        e_email = e1.text_input("E-Mail", email)
+                        e_role  = e2.selectbox(
+                            "Rolle",
+                            ["admin", "barlead", "user", "inventur"],
+                            index=["admin","barlead","user","inventur"].index(role) if role in ["admin","barlead","user","inventur"] else 2,
+                            key=f"role_{uid}"
+                        )
+                        e3, e4 = st.columns(2)
+                        e_first = e3.text_input("Vorname", first or "")
+                        e_last  = e4.text_input("Nachname", last or "")
+                        e_funcs = st.multiselect(
+                            "Funktionen",
+                            func_list,
+                            default=[f.strip() for f in (funcs or "").split(",") if f.strip()],
+                            key=f"funcs_{uid}"
+                        )
 
-                    if save_col.button("💾 Änderungen speichern", use_container_width=True):
-                        try:
-                            with conn() as cn:
-                                c = cn.cursor()
-                                c.execute("""
-                                    UPDATE users
-                                    SET email=?, first_name=?, last_name=?, role=?, functions=?
-                                    WHERE id=?
-                                """, (e_email, e_first, e_last, e_role, ", ".join(e_funcs), uid))
-                                cn.commit()
-                            st.success("Benutzer aktualisiert.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Speichern: {e}")
+                        save_btn, del_btn = st.columns([2, 1])
 
-                    # Löschen mit Bestätigung
-                    with del_col:
-                        st.write("")
-                        confirm = st.checkbox("Löschen bestätigen")
-                        if st.button("🗑️ Benutzer löschen", disabled=not confirm, use_container_width=True):
+                        if save_btn.form_submit_button("💾 Änderungen speichern", use_container_width=True, key=f"save_{uid}"):
+                            try:
+                                with conn() as cn:
+                                    c = cn.cursor()
+                                    c.execute("""
+                                        UPDATE users
+                                        SET email=?, first_name=?, last_name=?, role=?, functions=?
+                                        WHERE id=?
+                                    """, (e_email, e_first, e_last, e_role, ", ".join(e_funcs), uid))
+                                    cn.commit()
+                                st.success("✅ Benutzer aktualisiert.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Fehler beim Speichern: {e}")
+
+                    with st.expander("❌ Benutzer löschen", expanded=False):
+                        st.warning("Achtung: Das Löschen ist endgültig!")
+                        confirm = st.checkbox("Löschen bestätigen", key=f"confirm_{uid}")
+                        if st.button("🗑️ Benutzer jetzt löschen", use_container_width=True, disabled=not confirm, key=f"delete_{uid}"):
                             try:
                                 with conn() as cn:
                                     c = cn.cursor()
                                     c.execute("DELETE FROM users WHERE id=?", (uid,))
                                     cn.commit()
-                                st.success(f"Benutzer '{row['Benutzername']}' gelöscht.")
+                                st.success(f"Benutzer '{username}' gelöscht.")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Fehler beim Löschen: {e}")
@@ -234,7 +238,7 @@ def render_users_admin():
         else:
             st.caption("🔎 Bitte Suchbegriff eingeben oder Buchstaben auswählen.")
 
-    # ------------------- TAB 4: Funktionen -------------------
+    # ---------------- TAB 4: Funktionen ----------------
     with tabs[3]:
         st.subheader("Funktionen verwalten")
         with conn() as cn:
@@ -249,7 +253,7 @@ def render_users_admin():
             height=400
         )
 
-        if st.button("💾 Änderungen speichern", use_container_width=True):
+        if st.button("💾 Änderungen speichern", use_container_width=True, key="funcs_save"):
             with conn() as cn:
                 c = cn.cursor()
                 c.execute("DELETE FROM functions")
