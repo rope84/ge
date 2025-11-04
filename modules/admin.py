@@ -265,20 +265,24 @@ def _render_home():
 
     # Betriebskennzahlen
     try:
-        with conn() as cn:
-            c = cn.cursor()
-            last_inv = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()[0] if _table_exists(c, "inventur") else None
-            artikel_count = c.execute(
+    with conn() as cn:
+        c = cn.cursor()
+        last_inv = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()[0] if _table_exists(c, "inventur") else None
+
+        # ✅ NEU: Artikel zählen aus items
+        artikel_count = c.execute(
             "SELECT COUNT(*) FROM items"
         ).fetchone()[0] if _table_exists(c, "items") else 0
-            einkauf_total = einkauf_total or 0
-            umsatz_total  = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()[0] if _table_exists(c, "umsatz") else 0
-            umsatz_total  = umsatz_total or 0
-    except Exception:
-        last_inv = None
-        artikel_count = 0
-        einkauf_total = 0
-        umsatz_total  = 0
+
+        einkauf_total = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()[0] if _table_exists(c, "items") else 0
+        einkauf_total = einkauf_total or 0
+        umsatz_total  = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()[0] if _table_exists(c, "umsatz") else 0
+        umsatz_total  = umsatz_total or 0
+except Exception:
+    last_inv = None
+    artikel_count = 0
+    einkauf_total = 0
+    umsatz_total  = 0
 
     wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
     last_inv_str = "—"
