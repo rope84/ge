@@ -11,6 +11,11 @@ from core.ui_theme import page_header, section_title
 from core.auth import change_password  # falls in Untermodulen gebraucht
 from core.config import APP_NAME, APP_VERSION
 
+# GANZ OBEN, direkt nach den Imports
+import importlib
+from pathlib import Path
+ADMIN_UI_VERSION = "admin-ui-2025-11-04-23-xx"
+
 # 👉 neue Benutzer-UI (muss in ge/modules/admin/users_admin.py liegen)
 from .users_admin import render_users_admin
 
