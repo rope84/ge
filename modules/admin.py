@@ -268,8 +268,9 @@ def _render_home():
         with conn() as cn:
             c = cn.cursor()
             last_inv = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()[0] if _table_exists(c, "inventur") else None
-            artikel_count = c.execute("SELECT COUNT(*) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
-            einkauf_total = c.execute("SELECT SUM(purchase_price) FROM inventur_items").fetchone()[0] if _table_exists(c, "inventur_items") else 0
+            artikel_count = c.execute(
+            "SELECT COUNT(*) FROM items"
+        ).fetchone()[0] if _table_exists(c, "items") else 0
             einkauf_total = einkauf_total or 0
             umsatz_total  = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()[0] if _table_exists(c, "umsatz") else 0
             umsatz_total  = umsatz_total or 0
