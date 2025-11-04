@@ -67,7 +67,7 @@ def _ensure_tables():
 def render_users_admin():
     _ensure_tables()
 
-    tabs = st.tabs(["📊 Übersicht", "👤 Benutzer", "🔍 Suche", "⚙️ Funktionen"])
+    tabs = st.tabs(["📊 Übersicht", "👤 Benutzer", "🔍 Suchen & Bearbeiten", "⚙️ Funktionen"])
 
     # ------------------- TAB 1: Übersicht -------------------
     with tabs[0]:
@@ -128,45 +128,111 @@ def render_users_admin():
                     except Exception as e:
                         st.error(f"Fehler beim Anlegen: {e}")
 
-    # ------------------- TAB 3: Suche -------------------
+    # ------------------- TAB 3: Suchen & Bearbeiten -------------------
     with tabs[2]:
-        st.subheader("Benutzer suchen")
+        st.subheader("Benutzer suchen & bearbeiten")
 
         col1, col2 = st.columns([3, 2])
         query = col1.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)")
 
-        # A–Z Navigation
+        # A–Z Auswahl
         letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        selected_letter = col2.selectbox("Nach Anfangsbuchstabe filtern", ["—"] + letters)
+        selected_letter = col2.selectbox("Nach Anfangsbuchstaben filtern", ["—"] + letters)
 
         where_clause = ""
         params = []
 
         if query:
             where_clause = """WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?"""
-            params = [f"%{query}%"] * 6
+            params = [f"%{query}%" for _ in range(6)]
         elif selected_letter and selected_letter != "—":
             letter = selected_letter + "%"
             where_clause = """WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"""
             params = [letter, letter, letter]
 
+        # Funktionsliste für Editor
+        with conn() as cn:
+            c = cn.cursor()
+            func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
+
         if where_clause:
             with conn() as cn:
                 c = cn.cursor()
                 results = c.execute(f"""
-                    SELECT username, email, first_name, last_name, role, functions
+                    SELECT id, username, email, first_name, last_name, role, functions
                     FROM users
                     {where_clause}
                     ORDER BY username
                 """, tuple(params)).fetchall()
 
             if results:
-                df = pd.DataFrame(results, columns=["Benutzername","E-Mail","Vorname","Nachname","Rolle","Funktionen"])
-                st.dataframe(df, use_container_width=True, height=360)
+                df = pd.DataFrame(
+                    results,
+                    columns=["ID","Benutzername","E-Mail","Vorname","Nachname","Rolle","Funktionen"]
+                )
+                st.dataframe(df.drop(columns=["ID"]), use_container_width=True, height=280)
+
+                st.markdown("---")
+                st.subheader("Ausgewählten Benutzer bearbeiten / löschen")
+
+                # Auswahl
+                sel_user = st.selectbox("Benutzer auswählen", df["Benutzername"])
+                if sel_user:
+                    row = df[df["Benutzername"] == sel_user].iloc[0]
+                    uid = int(row["ID"])
+
+                    # Bearbeitungsfelder
+                    e_cols1 = st.columns(2)
+                    e_email = e_cols1[0].text_input("E-Mail", row["E-Mail"])
+                    e_role  = e_cols1[1].selectbox(
+                        "Rolle",
+                        ["admin", "barlead", "user", "inventur"],
+                        index=["admin","barlead","user","inventur"].index(row["Rolle"]) if row["Rolle"] in ["admin","barlead","user","inventur"] else 2
+                    )
+                    e_cols2 = st.columns(2)
+                    e_first = e_cols2[0].text_input("Vorname", row["Vorname"] or "")
+                    e_last  = e_cols2[1].text_input("Nachname", row["Nachname"] or "")
+                    e_funcs = st.multiselect(
+                        "Funktionen",
+                        func_list,
+                        default=[f.strip() for f in (row["Funktionen"] or "").split(",") if f.strip()]
+                    )
+
+                    save_col, del_col = st.columns([2,1])
+
+                    if save_col.button("💾 Änderungen speichern", use_container_width=True):
+                        try:
+                            with conn() as cn:
+                                c = cn.cursor()
+                                c.execute("""
+                                    UPDATE users
+                                    SET email=?, first_name=?, last_name=?, role=?, functions=?
+                                    WHERE id=?
+                                """, (e_email, e_first, e_last, e_role, ", ".join(e_funcs), uid))
+                                cn.commit()
+                            st.success("Benutzer aktualisiert.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Speichern: {e}")
+
+                    # Löschen mit Bestätigung
+                    with del_col:
+                        st.write("")
+                        confirm = st.checkbox("Löschen bestätigen")
+                        if st.button("🗑️ Benutzer löschen", disabled=not confirm, use_container_width=True):
+                            try:
+                                with conn() as cn:
+                                    c = cn.cursor()
+                                    c.execute("DELETE FROM users WHERE id=?", (uid,))
+                                    cn.commit()
+                                st.success(f"Benutzer '{row['Benutzername']}' gelöscht.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Fehler beim Löschen: {e}")
             else:
                 st.info("Keine Benutzer gefunden.")
         else:
-            st.caption("🔍 Bitte Suchbegriff eingeben oder Buchstaben auswählen.")
+            st.caption("🔎 Bitte Suchbegriff eingeben oder Buchstaben auswählen.")
 
     # ------------------- TAB 4: Funktionen -------------------
     with tabs[3]:
