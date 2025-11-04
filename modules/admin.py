@@ -37,7 +37,7 @@ def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
-        # --- USERS (erweitert um 'functions') ---
+        # --- USERS (erweitert um 'functions' & 'created_at') ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,18 +47,21 @@ def _ensure_tables():
                 first_name TEXT,
                 last_name TEXT,
                 passhash TEXT NOT NULL DEFAULT '',
-                functions TEXT DEFAULT '',           -- NEU: kommagetrennte Funktionsliste
-                created_at TEXT DEFAULT (datetime('now'))
+                functions TEXT DEFAULT '',
+                created_at TEXT
             )
         """)
-        # Migration: 'functions' ggf. nachziehen
+
+        # Migration: Spalten ggf. nachziehen
         c.execute("PRAGMA table_info(users)")
         user_cols = {row[1] for row in c.fetchall()}
+
         if "functions" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+
         if "created_at" not in user_cols:
-    c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
-    c.execute("UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL")
+            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+            c.execute("UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL")
 
         # --- FUNKTIONSKATALOG ---
         c.execute("""
@@ -79,7 +82,7 @@ def _ensure_tables():
             ]
             c.executemany("INSERT INTO functions(name, description) VALUES(?,?)", defaults)
 
-        # --- FIXCOSTS, META, CHANGELOG (wie gehabt) ---
+        # --- FIXCOSTS / META / CHANGELOG ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS fixcosts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
