@@ -5,12 +5,12 @@ from core.db import conn
 # --- kleine Card-Helper (ähnlicher Look wie im Admin-Cockpit) ---
 def _role_color(role: str) -> str:
     colors = {
-        "admin": "#e11d48",     # rot
-        "barlead": "#0ea5e9",   # blau
-        "user": "#10b981",      # grün
-        "inventur": "#f59e0b",  # orange
+        "admin": "#e11d48",
+        "barlead": "#0ea5e9",
+        "user": "#10b981",
+        "inventur": "#f59e0b",
     }
-    return colors.get(role, "#6b7280")  # grau
+    return colors.get(role, "#6b7280")
 
 def _card(title: str, value: str, color: str) -> str:
     return f"""
@@ -32,7 +32,6 @@ def _card(title: str, value: str, color: str) -> str:
 def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
-        # users
         c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +45,6 @@ def _ensure_tables():
             created_at TEXT
         )
         """)
-        # functions
         c.execute("""
         CREATE TABLE IF NOT EXISTS functions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,24 +67,20 @@ def _ensure_tables():
 def render_users_admin():
     _ensure_tables()
 
-    # Tabs: Übersicht (nur Zahlen), Benutzer, Suche, Funktionen
     tabs = st.tabs(["📊 Übersicht", "👤 Benutzer", "🔍 Suche", "⚙️ Funktionen"])
 
-    # ------------------- TAB 1: Übersicht (nur Zahlen) -------------------
+    # ------------------- TAB 1: Übersicht -------------------
     with tabs[0]:
         with conn() as cn:
             c = cn.cursor()
             total = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             rows  = c.execute("SELECT role, COUNT(*) FROM users GROUP BY role ORDER BY role").fetchall()
 
-        # Erste Karte: Gesamt
         col_total = st.columns(1)[0]
         col_total.markdown(_card("Gesamtanzahl Benutzer", str(total), "#3b82f6"), unsafe_allow_html=True)
         st.write("")
 
-        # Karten für Rollen, dynamisch
         if rows:
-            # 4 Spalten-Grid
             def chunk(lst, n):
                 for i in range(0, len(lst), n):
                     yield lst[i:i+n]
@@ -98,51 +92,14 @@ def render_users_admin():
         else:
             st.info("Noch keine Benutzer vorhanden.")
 
-    # ------------------- TAB 2: Benutzerliste & Bearbeiten -------------------
+    # ------------------- TAB 2: Nur neuen Benutzer anlegen -------------------
     with tabs[1]:
+        st.subheader("Neuen Benutzer anlegen")
+
         with conn() as cn:
             c = cn.cursor()
-            users = c.execute(
-                "SELECT id, username, email, first_name, last_name, role, functions FROM users ORDER BY id"
-            ).fetchall()
             func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
 
-        st.subheader("Benutzer")
-        if not users:
-            st.info("Noch keine Benutzer angelegt.")
-        else:
-            df = pd.DataFrame(users, columns=["ID","Benutzername","E-Mail","Vorname","Nachname","Rolle","Funktionen"])
-            st.dataframe(df.drop(columns=["ID"]), use_container_width=True, height=320)
-
-            st.divider()
-            st.subheader("Benutzer bearbeiten")
-            selected = st.selectbox("Wähle Benutzer", df["Benutzername"])
-            if selected:
-                row = df[df["Benutzername"] == selected].iloc[0]
-                e_email = st.text_input("E-Mail", row["E-Mail"])
-                e_first = st.text_input("Vorname", row["Vorname"])
-                e_last  = st.text_input("Nachname", row["Nachname"])
-                all_roles = sorted(df["Rolle"].unique().tolist() + ["admin","user","inventur","barlead"])
-                # Duplizierte Einträge bereinigen
-                all_roles = sorted(set(all_roles))
-                e_role = st.selectbox("Rolle", all_roles, index=all_roles.index(row["Rolle"]) if row["Rolle"] in all_roles else 0)
-                e_funcs = st.multiselect(
-                    "Funktionen", func_list,
-                    default=[f.strip() for f in (row["Funktionen"] or "").split(",") if f.strip()]
-                )
-
-                if st.button("💾 Änderungen speichern"):
-                    with conn() as cn:
-                        c = cn.cursor()
-                        c.execute("""
-                            UPDATE users SET email=?, first_name=?, last_name=?, role=?, functions=? WHERE id=?
-                        """, (e_email, e_first, e_last, e_role, ", ".join(e_funcs), int(row["ID"])))
-                        cn.commit()
-                    st.success("Benutzer aktualisiert.")
-                    st.rerun()
-
-        st.divider()
-        st.subheader("Neuen Benutzer hinzufügen")
         with st.form("add_user_form"):
             c1, c2 = st.columns(2)
             username = c1.text_input("Benutzername")
@@ -154,7 +111,7 @@ def render_users_admin():
             selected_funcs = st.multiselect("Funktionen", func_list)
             password = st.text_input("Passwort", type="password")
 
-            if st.form_submit_button("➕ Benutzer erstellen"):
+            if st.form_submit_button("➕ User anlegen", use_container_width=True):
                 if not username or not password:
                     st.warning("Benutzername und Passwort erforderlich.")
                 else:
@@ -173,40 +130,43 @@ def render_users_admin():
 
     # ------------------- TAB 3: Suche -------------------
     with tabs[2]:
-        st.subheader("Benutzer suchen & bearbeiten")
-        query = st.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)")
+        st.subheader("Benutzer suchen")
+
+        col1, col2 = st.columns([3, 2])
+        query = col1.text_input("Suchbegriff (Name, E-Mail, Rolle, Funktionen …)")
+
+        # A–Z Navigation
+        letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        selected_letter = col2.selectbox("Nach Anfangsbuchstabe filtern", ["—"] + letters)
+
+        where_clause = ""
+        params = []
+
         if query:
+            where_clause = """WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?"""
+            params = [f"%{query}%"] * 6
+        elif selected_letter and selected_letter != "—":
+            letter = selected_letter + "%"
+            where_clause = """WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"""
+            params = [letter, letter, letter]
+
+        if where_clause:
             with conn() as cn:
                 c = cn.cursor()
-                results = c.execute("""
-                    SELECT id, username, email, first_name, last_name, role, functions
+                results = c.execute(f"""
+                    SELECT username, email, first_name, last_name, role, functions
                     FROM users
-                    WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR role LIKE ? OR functions LIKE ?
+                    {where_clause}
                     ORDER BY username
-                """, tuple([f"%{query}%"] * 6)).fetchall()
+                """, tuple(params)).fetchall()
 
             if results:
-                df = pd.DataFrame(results, columns=["ID", "Benutzername", "E-Mail", "Vorname", "Nachname", "Rolle", "Funktionen"])
-                st.dataframe(df.drop(columns=["ID"]), use_container_width=True, height=300)
-                sel = st.selectbox("Benutzer auswählen", df["Benutzername"])
-                if sel:
-                    row = df[df["Benutzername"] == sel].iloc[0]
-                    # Rollenliste dynamisch + Defaults
-                    all_roles = sorted(set(list(df["Rolle"].unique()) + ["admin","user","inventur","barlead"]))
-                    new_role = st.selectbox("Neue Rolle", all_roles, index=all_roles.index(row["Rolle"]) if row["Rolle"] in all_roles else 0)
-                    with conn() as cn:
-                        c = cn.cursor()
-                        func_list = [r[0] for r in c.execute("SELECT name FROM functions ORDER BY name").fetchall()]
-                    new_funcs = st.multiselect("Funktionen", func_list, default=[f.strip() for f in (row["Funktionen"] or "").split(",") if f.strip()])
-                    if st.button("💾 Änderungen speichern", key="search_edit"):
-                        with conn() as cn:
-                            c = cn.cursor()
-                            c.execute("UPDATE users SET role=?, functions=? WHERE id=?", (new_role, ", ".join(new_funcs), int(row["ID"])))
-                            cn.commit()
-                        st.success("Benutzer aktualisiert.")
-                        st.rerun()
+                df = pd.DataFrame(results, columns=["Benutzername","E-Mail","Vorname","Nachname","Rolle","Funktionen"])
+                st.dataframe(df, use_container_width=True, height=360)
             else:
                 st.info("Keine Benutzer gefunden.")
+        else:
+            st.caption("🔍 Bitte Suchbegriff eingeben oder Buchstaben auswählen.")
 
     # ------------------- TAB 4: Funktionen -------------------
     with tabs[3]:
