@@ -732,48 +732,50 @@ def _render_backup_admin():
 # ---------------- Haupt-Render ----------------
 def render_admin():
     """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
-    # 1) Zugriffsschutz
+    # Zugriffsschutz
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
 
-    # 2) Basis-Hooks
-    _ensure_tables()
-    _ensure_version_logged()
+    # --- Ladeindikator hinzufügen ---
+    with st.spinner("🔄 Admin-Cockpit wird geladen..."):
+        # Basis-Hooks
+        _ensure_tables()
+        _ensure_version_logged()
 
-    # 3) Kopf
-    page_header("Admin-Cockpit", "System- und Datenübersicht")
+        # Kopfbereich
+        page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    # 4) Tabs – Reihenfolge unverändert + neuer Tab „📦 Daten“
-    tabs = st.tabs([
-        "🏠 Übersicht",     # 0
-        "🏢 Betrieb",       # 1
-        "👤 Benutzer",      # 2
-        "💰 Fixkosten",     # 3
-        "🗂️ Datenbank",     # 4
-        "📦 Daten",         # 5
-        "💾 Backups"        # 6
-    ])
+        # Tabs definieren
+        tabs = st.tabs([
+            "🏠 Übersicht",     # 0
+            "🏢 Betrieb",       # 1
+            "👤 Benutzer",      # 2
+            "💰 Fixkosten",     # 3
+            "🗂️ Datenbank",     # 4
+            "📦 Daten",         # 5
+            "💾 Backups"        # 6
+        ])
 
-    with tabs[0]:
-        _render_home()
-    with tabs[1]:
-        _render_business_admin()
-    with tabs[2]:
-        _render_user_admin()
-    with tabs[3]:
-        _render_fixcost_admin()
-    with tabs[4]:
-        _render_db_overview()
-    with tabs[5]:
-        try:
-            from modules.import_items import render_data_tools
-            render_data_tools()
-        except Exception as e:
-            st.error(f"Fehler beim Laden des Import-Tools: {e}")
-    with tabs[6]:
-        _render_backup_admin()
+        with tabs[0]:
+            _render_home()
+        with tabs[1]:
+            _render_business_admin()
+        with tabs[2]:
+            _render_user_admin()
+        with tabs[3]:
+            _render_fixcost_admin()
+        with tabs[4]:
+            _render_db_overview()
+        with tabs[5]:
+            try:
+                from modules.import_items import render_data_tools
+                render_data_tools()
+            except Exception as e:
+                st.error(f"Fehler beim Laden des Import-Tools: {e}")
+        with tabs[6]:
+            _render_backup_admin()
 
-    # 6) Footer
+    # Footer
     st.markdown("---")
     st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
