@@ -8,7 +8,6 @@ from core import auth
 from core.ui_theme import use_theme, page_header, small_footer
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
-from streamlit_javascript import st_javascript
 
 def go_to_profile():
     st.session_state["nav_choice"] = "Profil"
