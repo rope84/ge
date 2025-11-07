@@ -1,3 +1,4 @@
+# modules/admin/admin.py
 import streamlit as st
 import pandas as pd
 import shutil
@@ -8,12 +9,10 @@ from typing import Optional, List, Dict, Tuple
 
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
-from core.auth import change_password  # falls in Untermodulen gebraucht
 from core.config import APP_NAME, APP_VERSION
 
-# 👉 neue Benutzer-UI (muss in ge/modules/admin/users_admin.py liegen)
+# Benutzer-UI (liegt in modules/admin/users_admin.py)
 from .users_admin import render_users_admin
-
 
 # ---------------- Änderungsnotizen (Default) ----------------
 DEFAULT_CHANGELOG_NOTES = {
@@ -23,51 +22,48 @@ DEFAULT_CHANGELOG_NOTES = {
         "Verbessertes Profil-Modul inkl. Passwort ändern",
         "Inventur mit Monatslogik & PDF-Export",
         "Abrechnung poliert: Garderobe-Logik, Voucher-Einbezug",
-        "Datenbank-Backups: manuell, Statusanzeige"
+        "Datenbank-Backups: manuell, Statusanzeige",
     ]
 }
-
 
 # ---------------- Hilfsfunktionen / DB ----------------
 def _table_exists(c, name: str) -> bool:
     return c.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (name,)
+        (name,),
     ).fetchone() is not None
-
 
 def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
-        # --- USERS (ohne non-constant default; Migration unten setzt Werte) ---
+        # --- USERS (ohne Rollenpflicht; functions-basiert) ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                role TEXT NOT NULL,
-                email TEXT,
+                username   TEXT NOT NULL UNIQUE,
+                email      TEXT,
                 first_name TEXT,
-                last_name TEXT,
-                passhash TEXT NOT NULL DEFAULT '',
-                functions TEXT DEFAULT '',
+                last_name  TEXT,
+                passhash   TEXT NOT NULL DEFAULT '',
+                functions  TEXT DEFAULT '',
                 created_at TEXT
             )
         """)
-
-        # Migration: Spalten ggf. nachziehen
+        # Migration / Backfill
         c.execute("PRAGMA table_info(users)")
         user_cols = {row[1] for row in c.fetchall()}
-
         if "functions" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
-
+        if "passhash" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
         if "created_at" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
-        # fehlende created_at befüllen
-        c.execute("UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL")
+        # Normalize
+        c.execute("UPDATE users SET passhash = COALESCE(passhash,'')")
+        c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
 
-        # --- FUNKTIONSKATALOG ---
+        # --- FUNKTIONSKATALOG (Basis; Detailrechte pflegt users_admin) ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS functions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +71,7 @@ def _ensure_tables():
                 description TEXT
             )
         """)
-        # Defaults, falls leer
+        # Seed nur, wenn leer
         have_funcs = c.execute("SELECT COUNT(*) FROM functions").fetchone()[0]
         if have_funcs == 0:
             defaults = [
@@ -84,9 +80,12 @@ def _ensure_tables():
                 ("Lager", "Inventur & Artikelverwaltung"),
                 ("Inventur", "Nur Inventur- und Bestandsansicht"),
             ]
-            c.executemany("INSERT INTO functions(name, description) VALUES(?,?)", defaults)
+            c.executemany(
+                "INSERT INTO functions(name, description) VALUES(?,?)",
+                defaults,
+            )
 
-        # --- FIXCOSTS, META, CHANGELOG (wie gehabt) ---
+        # --- FIXCOSTS, META, CHANGELOG ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS fixcosts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,20 +112,17 @@ def _ensure_tables():
 
         cn.commit()
 
-
 def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
         c = cn.cursor()
         row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
-
 def _set_meta(key: str, value: str):
     with conn() as cn:
         c = cn.cursor()
         c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
         cn.commit()
-
 
 def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
     with conn() as cn:
@@ -137,7 +133,6 @@ def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
             out[k] = r[0] if r else None
         return out
 
-
 def _set_meta_many(data: Dict[str, str]):
     with conn() as cn:
         c = cn.cursor()
@@ -145,15 +140,16 @@ def _set_meta_many(data: Dict[str, str]):
             c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (k, v))
         cn.commit()
 
-
 def _insert_changelog(version: str, notes: List[str]):
     now = datetime.datetime.now().isoformat(timespec="seconds")
     with conn() as cn:
         c = cn.cursor()
         rows = [(now, version, note) for note in notes]
-        c.executemany("INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)", rows)
+        c.executemany(
+            "INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)",
+            rows,
+        )
         cn.commit()
-
 
 def _ensure_version_logged():
     last = _get_meta("last_seen_version")
@@ -162,7 +158,6 @@ def _ensure_version_logged():
         _insert_changelog(APP_VERSION, notes)
         _set_meta("last_seen_version", APP_VERSION)
 
-
 def _count_rows(table: str) -> int:
     with conn() as cn:
         c = cn.cursor()
@@ -170,17 +165,14 @@ def _count_rows(table: str) -> int:
             return 0
         return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
-
-# ---------------- Backups (manuell, BCK_YYYYMMDD_HHMMSS.bak) ----------------
+# ---------------- Backups ----------------
 def _list_backups() -> List[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     return sorted(BACKUP_DIR.glob("BCK_*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
 
-
 def _last_backup_time() -> Optional[datetime.datetime]:
     files = _list_backups()
     return datetime.datetime.fromtimestamp(max(files, key=lambda f: f.stat().st_mtime).stat().st_mtime) if files else None
-
 
 def _create_backup() -> Optional[Path]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -189,16 +181,13 @@ def _create_backup() -> Optional[Path]:
     shutil.copy(DB_PATH, target)
     return target
 
-
 def _restore_backup(file_path: Path):
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy(DB_PATH, BACKUP_DIR / f"pre_restore_{int(time.time())}.bak")
     shutil.copy(file_path, DB_PATH)
 
-
 def _format_size(bytes_: int) -> str:
     return f"{bytes_ / (1024 * 1024):.1f} MB"
-
 
 def _db_size_mb() -> float:
     try:
@@ -206,12 +195,13 @@ def _db_size_mb() -> float:
     except Exception:
         return 0.0
 
-
 def _db_table_stats() -> Tuple[int, int]:
-    """Anzahl Tabellen und Gesamtzeilen über alle Tabellen (ohne sqlite_ interne)."""
+    """Anzahl Tabellen und Gesamtzeilen (ohne sqlite_ interne)."""
     with conn() as cn:
         c = cn.cursor()
-        tables = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
+        tables = c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
         table_names = [t[0] for t in tables]
         total_rows = 0
         for t in table_names:
@@ -220,7 +210,6 @@ def _db_table_stats() -> Tuple[int, int]:
             except Exception:
                 pass
         return len(table_names), total_rows
-
 
 # ---------------- UI Helpers ----------------
 def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
@@ -231,7 +220,6 @@ def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
     if days <= 7:
         return ("#f59e0b", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
     return ("#ef4444", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
-
 
 def _card_html(title: str, color: str, lines: List[str]) -> str:
     body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
@@ -255,21 +243,8 @@ def _card_html(title: str, color: str, lines: List[str]) -> str:
     </div>
     """
 
-
-def _role_badge(role: str) -> str:
-    colors = {
-        "admin": "#e11d48",
-        "barlead": "#0ea5e9",
-        "user": "#10b981",
-        "inventur": "#f59e0b",
-    }
-    color = colors.get(role, "#6b7280")
-    return f"<span style='background:{color}; color:white; padding:2px 6px; border-radius:999px; font-size:11px;'>{role}</span>"
-
-
 def _pill(text: str, color: str = "#10b981") -> str:
     return f"<span style='background:{color}22; color:{color}; padding:2px 6px; border:1px solid {color}55; border-radius:999px; font-size:11px;'>{text}</span>"
-
 
 # ---------------- Übersicht ----------------
 def _render_home():
@@ -300,14 +275,14 @@ def _render_home():
             row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
             last_inv = row[0] if row and row[0] else None
 
-        # Artikel aus Artikelstamm (items)
+        # Artikel
         if _table_exists(c, "items"):
             row = c.execute("SELECT COUNT(*) FROM items").fetchone()
             artikel_count = row[0] if row and row[0] else 0
             row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
             einkauf_total = row[0] if row and row[0] else 0
 
-        # Umsätze summieren
+        # Umsätze
         if _table_exists(c, "umsatz"):
             row = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()
             umsatz_total = row[0] if row and row[0] else 0
@@ -411,13 +386,13 @@ def _render_home():
 
     st.divider()
 
-    # --- Changelog (wie gehabt) ---
+    # --- Changelog ---
     section_title("📝 Änderungsprotokoll")
     with conn() as cn:
         df = pd.read_sql(
             "SELECT created_at, version, note FROM changelog "
             "ORDER BY datetime(created_at) DESC LIMIT 20",
-            cn
+            cn,
         )
     if df.empty:
         st.info("Keine Einträge im Changelog.")
@@ -425,9 +400,8 @@ def _render_home():
         for _, r in df.iterrows():
             st.markdown(
                 f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
-
 
 # ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
@@ -442,7 +416,7 @@ def _render_business_admin():
         "business_email",
         "business_uid",
         "business_iban",
-        "business_capacity",   # NEU
+        "business_capacity",
         "business_note",
     ]
     values = _get_meta_many(keys)
@@ -473,11 +447,10 @@ def _render_business_admin():
                 "business_email": email,
                 "business_uid": uid,
                 "business_iban": iban,
-                "business_capacity": str(capacity),   # als String speichern
+                "business_capacity": str(capacity),
                 "business_note": note,
             })
             st.success("Betriebsdaten gespeichert.")
-
 
 # ---------------- Fixkosten ----------------
 def _render_fixcost_admin():
@@ -499,9 +472,10 @@ def _render_fixcost_admin():
             else:
                 with conn() as cn:
                     c = cn.cursor()
-                    c.execute("""INSERT INTO fixcosts(name, amount, note, is_active)
-                                 VALUES(?,?,?,?)""",
-                              (name, float(amount), note, int(active)))
+                    c.execute(
+                        "INSERT INTO fixcosts(name, amount, note, is_active) VALUES(?,?,?,?)",
+                        (name, float(amount), note, int(active)),
+                    )
                     cn.commit()
                 st.success("Fixkosten hinzugefügt.")
                 st.rerun()
@@ -513,10 +487,7 @@ def _render_fixcost_admin():
         for fid, name, amount, note, active in costs:
             state_emoji = "🟢" if active else "⚪"
             with st.expander(f"{state_emoji} {name} – {amount:.2f} €", expanded=False):
-                st.markdown(
-                    _pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"),
-                    unsafe_allow_html=True
-                )
+                st.markdown(_pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"), unsafe_allow_html=True)
                 st.write("")
 
                 c1, c2 = st.columns([2, 1])
@@ -528,8 +499,10 @@ def _render_fixcost_admin():
                 if s1.button("💾 Speichern", key=f"fc_save_{fid}"):
                     with conn() as cn:
                         c = cn.cursor()
-                        c.execute("""UPDATE fixcosts SET name=?, amount=?, note=?, is_active=? WHERE id=?""",
-                                  (e_name, float(e_amount), e_note, int(e_active), fid))
+                        c.execute(
+                            "UPDATE fixcosts SET name=?, amount=?, note=?, is_active=? WHERE id=?",
+                            (e_name, float(e_amount), e_note, int(e_active), fid),
+                        )
                         cn.commit()
                     st.success("Gespeichert.")
                 if s2.button("🗑️ Löschen", key=f"fc_del_{fid}"):
@@ -539,7 +512,6 @@ def _render_fixcost_admin():
                         cn.commit()
                     st.warning(f"Fixkosten '{name}' gelöscht.")
                     st.rerun()
-
 
 # ---------------- Datenbank-Übersicht ----------------
 def _render_db_overview():
@@ -562,7 +534,6 @@ def _render_db_overview():
 
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
-
 
 # ---------------- Backup-Verwaltung ----------------
 def _render_backup_admin():
@@ -600,7 +571,6 @@ def _render_backup_admin():
             time.sleep(1.0)
         st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
-
 # ---------------- Haupt-Render ----------------
 def render_admin():
     """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
@@ -616,15 +586,15 @@ def render_admin():
     # Kopf
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    # Tabs – Reihenfolge unverändert + Daten-Tab (Import)
+    # Tabs
     tabs = st.tabs([
         "🏠 Übersicht",     # 0
         "🏢 Betrieb",       # 1
-        "👤 Benutzer",      # 2  -> neue UI aus users_admin.py
+        "👤 Benutzer",      # 2
         "💰 Fixkosten",     # 3
         "🗂️ Datenbank",     # 4
         "📦 Daten",         # 5 (Import-Tools)
-        "💾 Backups"        # 6
+        "💾 Backups",       # 6
     ])
 
     with tabs[0]:
@@ -632,7 +602,6 @@ def render_admin():
     with tabs[1]:
         _render_business_admin()
     with tabs[2]:
-        # neue Benutzerverwaltung
         render_users_admin()
     with tabs[3]:
         _render_fixcost_admin()
