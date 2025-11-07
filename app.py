@@ -18,26 +18,22 @@ setup_db()
 seed_admin_if_empty()
 
 # ---------------- Dynamic Module Import (with hot reload) ----------------
-import importlib, sys, os, inspect, datetime
+import importlib, inspect, datetime
 from pathlib import Path
 
 def import_modules():
     modules, errors = {}, {}
-    loaded_meta = {}  # nur fürs Debugging
+    loaded_meta = {}  # optionales Debugging
 
     def try_import(qualified_name: str):
         base = qualified_name.split(".")[-1]  # z.B. "start" aus "modules.start"
         try:
-            # 1) Immer importieren
             mod = importlib.import_module(qualified_name)
-            # 2) Immer reloaden (erzwingt Hot-Reload während der Streamlit-Session)
-            mod = importlib.reload(mod)
+            mod = importlib.reload(mod)  # Hot-Reload
 
-            # 3) Render-Funktion auflösen
             fn = getattr(mod, f"render_{base}")  # erwartet z.B. render_start()
             modules[base] = fn
 
-            # 4) Debug-Metadaten (Dateipfad, mtime)
             file_path = Path(inspect.getfile(mod))
             loaded_meta[base] = {
                 "file": str(file_path),
@@ -48,10 +44,10 @@ def import_modules():
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-    for mod_name in ["start", "abrechnung", "dashboard", "inventur", "profile", "admin"]:
+    # WICHTIG: cashflow statt abrechnung laden
+    for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
         try_import(f"modules.{mod_name}")
 
-    # damit wir in route() debuggen können
     return modules, errors, loaded_meta
 
 modules, import_errors, import_meta = import_modules()
@@ -89,8 +85,6 @@ def login_screen():
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
     from core.config import APP_NAME, APP_VERSION
-
-    # Inline-CSS für Positionierung und Stil
     st.markdown(
         f"""
         <style>
@@ -124,21 +118,21 @@ def fixed_footer():
         """,
         unsafe_allow_html=True,
     )
-   
+
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
-        # --- 1) Query-Param (Footer-Link) abfangen
+        # Query-Param (Footer-Link) abfangen
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
             st.query_params.clear()
 
-        # --- 2) Einmal-Navigation über Flag abfangen (aus Modulen wie start.py)
+        # Einmal-Navigation über Flag abfangen (aus Modulen wie start.py)
         if st.session_state.get("nav_to"):
             st.session_state["nav_choice"] = st.session_state.pop("nav_to")
 
-        # --- 3) Optionaler Profil-Flag (falls du ihn noch nutzt)
+        # Optionaler Profil-Flag
         if st.session_state.get("go_profile"):
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
@@ -165,10 +159,12 @@ def sidebar():
             logout()
 
         fixed_footer()
+
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
-    "abrechnung": "abrechnung",
+    # Mapping: Anzeige "Abrechnung" -> Modul cashflow
+    "abrechnung": "cashflow",
     "dashboard": "dashboard",
     "inventur": "inventur",
     "profil": "profile",
@@ -194,8 +190,9 @@ def route():
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
 
-        elif mod_key == "abrechnung":
-            mod_func(st.session_state.role, st.session_state.scope)
+        elif mod_key == "cashflow":
+            # Neues Abrechnungsmodul benötigt keine Parameter
+            mod_func()
 
         elif mod_key == "dashboard":
             mod_func()
@@ -213,8 +210,6 @@ def route():
             if st.session_state.role != "admin":
                 st.error("Kein Zugriff. Adminrechte erforderlich.")
             else:
-                
-                # Rendern
                 mod_func()
 
         else:
@@ -223,6 +218,7 @@ def route():
     except Exception:
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
+
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
