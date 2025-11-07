@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 from core.db import conn
 from core.ui_theme import section_title
 
@@ -21,7 +21,7 @@ PERM_COLS: List[Tuple[str, str]] = [
 ]
 
 def _ensure_user_schema():
-    """Erstellt oder migriert die users-Tabelle (ohne Rolle, nur Funktionen)."""
+    """Erstellt oder migriert die users-Tabelle (ohne Rolle, nur Funktionen + Units)."""
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
@@ -32,6 +32,7 @@ def _ensure_user_schema():
                 first_name TEXT,
                 last_name TEXT,
                 functions TEXT DEFAULT '',
+                units TEXT DEFAULT '',
                 passhash TEXT NOT NULL DEFAULT '',
                 created_at TEXT
             )
@@ -41,6 +42,8 @@ def _ensure_user_schema():
         cols = {row[1] for row in c.fetchall()}
         if "functions" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+        if "units" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN units TEXT DEFAULT ''")
         if "passhash" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
         if "created_at" not in cols:
@@ -48,6 +51,7 @@ def _ensure_user_schema():
         # Backfill
         c.execute("UPDATE users SET passhash = COALESCE(passhash, '')")
         c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
+        c.execute("UPDATE users SET units = COALESCE(units, '')")
         cn.commit()
 
 def _ensure_function_schema():
@@ -70,6 +74,74 @@ def _ensure_function_schema():
         set_expr = ", ".join([f"{col}=COALESCE({col},0)" for col, _ in PERM_COLS])
         c.execute(f"UPDATE functions SET {set_expr}")
         cn.commit()
+
+# ---------------- Meta (Counts für Units) ----------------
+
+_META_UNIT_KEYS = {
+    "bars": ["bars_count", "business_bars", "num_bars"],
+    "registers": ["registers_count", "business_registers", "num_registers", "kassen_count"],
+    "cloakrooms": ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"],
+}
+
+def _get_meta_value(key: str) -> Optional[str]:
+    with conn() as cn:
+        c = cn.cursor()
+        try:
+            row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        except Exception:
+            return None
+        return row[0] if row else None
+
+def _get_unit_counts() -> Dict[str, int]:
+    def _first_int(keys: List[str], default: int = 0) -> int:
+        for k in keys:
+            v = _get_meta_value(k)
+            if v is not None:
+                try:
+                    return max(0, int(str(v).strip()))
+                except Exception:
+                    continue
+        return default
+
+    return {
+        "bars": _first_int(_META_UNIT_KEYS["bars"], 0),
+        "registers": _first_int(_META_UNIT_KEYS["registers"], 0),
+        "cloakrooms": _first_int(_META_UNIT_KEYS["cloakrooms"], 0),
+    }
+
+# ------------------------------------------------------------
+# ENCODING / DECODING UNITS
+# ------------------------------------------------------------
+
+def _encode_units(bar_ids: List[int], reg_ids: List[int], cloak_ids: List[int]) -> str:
+    parts = []
+    parts += [f"bar:{i}" for i in bar_ids]
+    parts += [f"cash:{i}" for i in reg_ids]
+    parts += [f"cloak:{i}" for i in cloak_ids]
+    return ",".join(parts)
+
+def _decode_units(units: str) -> Dict[str, List[int]]:
+    out = {"bar": [], "cash": [], "cloak": []}
+    if not units:
+        return out
+    for token in [t.strip() for t in units.split(",") if t.strip()]:
+        if ":" not in token:
+            continue
+        t, v = token.split(":", 1)
+        try:
+            n = int(v)
+        except Exception:
+            continue
+        if t in out and n not in out[t]:
+            out[t].append(n)
+    # sortieren für saubere Anzeige
+    for k in out:
+        out[k] = sorted(out[k])
+    return out
+
+# ------------------------------------------------------------
+# DATEN-HELPERS
+# ------------------------------------------------------------
 
 def _get_functions_list():
     with conn() as cn:
@@ -141,8 +213,47 @@ def _tab_overview():
         )
 
 # ------------------------------------------------------------
-# TAB 2 – USER ERSTELLEN
+# TAB 2 – USER ERSTELLEN (inkl. Units)
 # ------------------------------------------------------------
+
+def _unit_multiselects(default_units: Dict[str, List[int]] | None = None):
+    counts = _get_unit_counts()
+    default_units = default_units or {"bar": [], "cash": [], "cloak": []}
+
+    st.caption("Zuweisungen (Einheiten)")
+    row1 = st.columns(3)
+
+    # Bars
+    bar_opts = [f"Bar {i}" for i in range(1, counts["bars"] + 1)]
+    bar_map = {f"Bar {i}": i for i in range(1, counts["bars"] + 1)}
+    sel_bars_lbl = row1[0].multiselect(
+        "Bars", bar_opts,
+        default=[f"Bar {i}" for i in default_units.get("bar", []) if i in bar_map.values()],
+        key=st.session_state.get("_ua_key_bar", f"ua_units_bars_new")
+    )
+    sel_bars = [bar_map[lbl] for lbl in sel_bars_lbl]
+
+    # Kassen
+    reg_opts = [f"Kassa {i}" for i in range(1, counts["registers"] + 1)]
+    reg_map = {f"Kassa {i}": i for i in range(1, counts["registers"] + 1)}
+    sel_regs_lbl = row1[1].multiselect(
+        "Kassen", reg_opts,
+        default=[f"Kassa {i}" for i in default_units.get("cash", []) if i in reg_map.values()],
+        key=st.session_state.get("_ua_key_reg", f"ua_units_regs_new")
+    )
+    sel_regs = [reg_map[lbl] for lbl in sel_regs_lbl]
+
+    # Garderoben
+    cloak_opts = [f"Garderobe {i}" for i in range(1, counts["cloakrooms"] + 1)]
+    cloak_map = {f"Garderobe {i}": i for i in range(1, counts["cloakrooms"] + 1)}
+    sel_cloak_lbl = row1[2].multiselect(
+        "Garderoben", cloak_opts,
+        default=[f"Garderobe {i}" for i in default_units.get("cloak", []) if i in cloak_map.values()],
+        key=st.session_state.get("_ua_key_cloak", f"ua_units_cloak_new")
+    )
+    sel_cloaks = [cloak_map[lbl] for lbl in sel_cloak_lbl]
+
+    return sel_bars, sel_regs, sel_cloaks
 
 def _tab_create_user():
     section_title("➕ User erstellen")
@@ -150,15 +261,19 @@ def _tab_create_user():
 
     with st.form("ua_add_user_form"):
         c1, c2 = st.columns(2)
-        username = c1.text_input("Benutzername")
-        email = c2.text_input("E-Mail")
+        username = c1.text_input("Benutzername").strip()
+        email = c2.text_input("E-Mail").strip()
 
         c3, c4 = st.columns(2)
-        first_name = c3.text_input("Vorname")
-        last_name = c4.text_input("Nachname")
+        first_name = c3.text_input("Vorname").strip()
+        last_name = c4.text_input("Nachname").strip()
 
         selected_funcs = st.multiselect("Funktionen", func_list)
         password = st.text_input("Passwort (optional)", type="password")
+
+        # Units
+        sel_bars, sel_regs, sel_cloaks = _unit_multiselects()
+        units_str = _encode_units(sel_bars, sel_regs, sel_cloaks)
 
         if st.form_submit_button("👤 User anlegen", use_container_width=True):
             if not username:
@@ -168,9 +283,9 @@ def _tab_create_user():
                 with conn() as cn:
                     c = cn.cursor()
                     c.execute("""
-                        INSERT INTO users (username, email, first_name, last_name, functions, passhash)
-                        VALUES (?,?,?,?,?,?)
-                    """, (username, email, first_name, last_name, ", ".join(selected_funcs), ""))
+                        INSERT INTO users (username, email, first_name, last_name, functions, units, passhash)
+                        VALUES (?,?,?,?,?,?,?)
+                    """, (username, email, first_name, last_name, ", ".join(selected_funcs), units_str, ""))
                     cn.commit()
 
                 # Passwort (optional)
@@ -186,7 +301,7 @@ def _tab_create_user():
                 st.error(f"Fehler beim Anlegen: {e}")
 
 # ------------------------------------------------------------
-# TAB 3 – SUCHEN & BEARBEITEN
+# TAB 3 – SUCHEN & BEARBEITEN (inkl. Units)
 # ------------------------------------------------------------
 
 ALPHABET = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -214,7 +329,7 @@ def _search_users(q: str, alpha: str):
         if q:
             like = f"%{q}%"
             sql = """
-                SELECT id, username, email, first_name, last_name, functions
+                SELECT id, username, email, first_name, last_name, functions, units
                 FROM users
                 WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR functions LIKE ?
                 ORDER BY username
@@ -222,7 +337,7 @@ def _search_users(q: str, alpha: str):
             return c.execute(sql, (like, like, like, like, like)).fetchall()
         elif alpha:
             sql = """
-                SELECT id, username, email, first_name, last_name, functions
+                SELECT id, username, email, first_name, last_name, functions, units
                 FROM users
                 WHERE (first_name IS NOT NULL AND UPPER(SUBSTR(first_name,1,1)) = ?)
                    OR (last_name  IS NOT NULL AND UPPER(SUBSTR(last_name ,1,1)) = ?)
@@ -233,7 +348,9 @@ def _search_users(q: str, alpha: str):
         return []
 
 def _edit_user_card(row, func_list):
-    uid, uname, email, first, last, funcs = row
+    uid, uname, email, first, last, funcs, units = row
+    parsed = _decode_units(units or "")
+
     with st.container(border=True):
         st.markdown(f"**{uname}**")
         c1, c2 = st.columns(2)
@@ -244,13 +361,54 @@ def _edit_user_card(row, func_list):
         curr_funcs = [f.strip() for f in (funcs or "").split(",") if f.strip()]
         e_funcs = st.multiselect("Funktionen", func_list, default=curr_funcs, key=f"ua_funcs_{uid}")
 
+        # Units (bestehende vorbelegen)
+        st.write("")
+        st.caption("Zuweisungen (Einheiten)")
+        counts = _get_unit_counts()
+
+        # Keys pro User damit Streamlit keine Duplicate-IDs baut
+        st.session_state[f"_ua_key_bar_{uid}"] = f"ua_units_bars_{uid}"
+        st.session_state[f"_ua_key_reg_{uid}"] = f"ua_units_regs_{uid}"
+        st.session_state[f"_ua_key_cloak_{uid}"] = f"ua_units_cloak_{uid}"
+
+        def _labels(prefix: str, amount: int) -> List[str]:
+            if prefix == "Bar":
+                return [f"Bar {i}" for i in range(1, amount + 1)]
+            if prefix == "Kassa":
+                return [f"Kassa {i}" for i in range(1, amount + 1)]
+            return [f"Garderobe {i}" for i in range(1, amount + 1)]
+
+        rowu = st.columns(3)
+        # Bars
+        bars_all = _labels("Bar", counts["bars"])
+        bars_map = {lbl: int(lbl.split()[-1]) for lbl in bars_all}
+        bars_default = [f"Bar {i}" for i in parsed.get("bar", []) if 1 <= i <= counts["bars"]]
+        bars_sel_lbl = rowu[0].multiselect("Bars", bars_all, default=bars_default, key=f"ua_units_bars_{uid}")
+        bars_sel = [bars_map[l] for l in bars_sel_lbl]
+
+        # Kassen
+        regs_all = _labels("Kassa", counts["registers"])
+        regs_map = {lbl: int(lbl.split()[-1]) for lbl in regs_all}
+        regs_default = [f"Kassa {i}" for i in parsed.get("cash", []) if 1 <= i <= counts["registers"]]
+        regs_sel_lbl = rowu[1].multiselect("Kassen", regs_all, default=regs_default, key=f"ua_units_regs_{uid}")
+        regs_sel = [regs_map[l] for l in regs_sel_lbl]
+
+        # Garderoben
+        cloak_all = _labels("Garderobe", counts["cloakrooms"])
+        cloak_map = {lbl: int(lbl.split()[-1]) for lbl in cloak_all}
+        cloak_default = [f"Garderobe {i}" for i in parsed.get("cloak", []) if 1 <= i <= counts["cloakrooms"]]
+        cloak_sel_lbl = rowu[2].multiselect("Garderoben", cloak_all, default=cloak_default, key=f"ua_units_cloak_{uid}")
+        cloak_sel = [cloak_map[l] for l in cloak_sel_lbl]
+
+        new_units = _encode_units(bars_sel, regs_sel, cloak_sel)
+
         colA, colB = st.columns([1,1])
         if colA.button("💾 Speichern", key=f"ua_save_{uid}", use_container_width=True):
             with conn() as cn:
                 c = cn.cursor()
                 c.execute("""
-                    UPDATE users SET first_name=?, last_name=?, email=?, functions=? WHERE id=?
-                """, (e_first, e_last, e_mail, ", ".join(e_funcs), uid))
+                    UPDATE users SET first_name=?, last_name=?, email=?, functions=?, units=? WHERE id=?
+                """, (e_first, e_last, e_mail, ", ".join(e_funcs), new_units, uid))
                 cn.commit()
             st.success("Änderungen gespeichert.")
             st.rerun()
@@ -299,6 +457,7 @@ def _tab_functions():
         users_with = _count_users_with_function(name)
         with st.expander(f"{name} · {users_with} User", expanded=False):
             c1, c2 = st.columns([2, 1])
+            # Admin-Funktion bleibt geschützt
             e_name = c1.text_input("Funktionsname", name, key=f"fn_name_{fid}", disabled=(name.lower()=="admin"))
             e_desc = c1.text_input("Beschreibung", desc or "", key=f"fn_desc_{fid}")
 
@@ -349,13 +508,16 @@ def _tab_functions():
             else:
                 with conn() as cn:
                     c = cn.cursor()
-                    c.execute("""
-                        INSERT INTO functions (name, description, can_view_sales, can_edit_sales, can_view_inventory, can_edit_inventory)
-                        VALUES (?,?,?,?,?,?)
-                    """, (n_name.strip(), n_desc.strip(), int(nv1), int(ne1), int(nv2), int(ne2)))
-                    cn.commit()
-                st.success("Funktion angelegt.")
-                st.rerun()
+                    try:
+                        c.execute("""
+                            INSERT INTO functions (name, description, can_view_sales, can_edit_sales, can_view_inventory, can_edit_inventory)
+                            VALUES (?,?,?,?,?,?)
+                        """, (n_name.strip(), n_desc.strip(), int(nv1), int(ne1), int(nv2), int(ne2)))
+                        cn.commit()
+                        st.success("Funktion angelegt.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Anlegen: {e}")
 
 # ------------------------------------------------------------
 # ENTRY
