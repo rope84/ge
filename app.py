@@ -182,15 +182,14 @@ def route():
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-    # Cashflow braucht den eingeloggten User (für Rechte & Unit-Zuweisungen)
-    user = st.session_state.get("username") or "unknown"
-    role = st.session_state.get("role") or "guest"
-    scope = st.session_state.get("scope") or ""
-    try:
-        mod_func(user, role, scope)
-    except TypeError:
-        # Fallback für ältere Signaturen
-        mod_func(user, role)
+            # Cashflow braucht den eingeloggten User (für Rechte & Unit-Zuweisungen)
+            user = st.session_state.get("username") or "unknown"
+            role = st.session_state.get("role") or "guest"
+            scope = st.session_state.get("scope") or ""
+            try:
+                mod_func(user, role, scope)      # render_cashflow(user, role, scope)
+            except TypeError:
+                mod_func(user, role)             # Fallback für ältere Signatur
 
         elif mod_key == "dashboard":
             mod_func()
@@ -216,7 +215,7 @@ def route():
     except Exception:
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
-
+        
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
