@@ -1,131 +1,112 @@
+# modules/cashflow/home.py
 import streamlit as st
 import datetime
-from typing import Dict
-from .utils import (
-    counts_from_meta,
-    get_events_for_day,
-    create_or_get_event,
-    delete_event,
-    get_event,
+
+from .models import (
+    ensure_cashflow_schema, meta_caps, get_or_create_event, list_events_for_day,
+    get_event, delete_event_if_open, upsert_event_units, list_active_units
 )
+from .utils import is_manager, allowed_unit_numbers
 
-def _status_badge(status: str) -> str:
-    col = "#10b981" if status == "approved" else "#f59e0b" if status == "open" else "#6b7280"
-    return f"<span style='background:{col}22;color:{col};border:1px solid {col}66;border-radius:999px;padding:2px 8px;font-size:11px'>{status}</span>"
+BADGE_OPEN = "<span style='background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b55;padding:2px 8px;border-radius:999px;font-size:11px;'>open</span>"
+BADGE_DONE = "<span style='background:#22c55e22;color:#22c55e;border:1px solid #22c55e66;padding:2px 8px;border-radius:999px;font-size:11px;'>done</span>"
 
-def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool):
-    # 1) Event-Datum + Auswahl/Anlage
-    c1, c2 = st.columns([1, 2])
-    day = c1.date_input("Event-Datum", value=st.session_state.get("cf_day") or datetime.date.today(), key="cf_day")
-    with c2:
-        existing = get_events_for_day(day)
-        if existing:
-            labels = [f"{name} ({status})" for (_id, name, status) in existing]
-            ids    = [ev_id for (ev_id, _n, _s) in existing]
-            sel = st.selectbox("Event auswählen", labels, index=0, key="cf_select_event")
-            # Map ausgewähltes Label -> id (gleicher Index)
-            ev_id = ids[labels.index(sel)]
-            st.session_state["cf_event_id"] = ev_id
-        else:
-            st.info("Kein Event an diesem Tag vorhanden.")
+def _tile(label: str, subtitle: str, footer_html: str, btn_label: str, key: str) -> bool:
+    with st.container(border=True):
+        st.markdown(f"**{label}**  \n<span style='opacity:.8;font-size:12px'>{subtitle}</span>", unsafe_allow_html=True)
+        st.markdown(footer_html, unsafe_allow_html=True)
+        return st.button(btn_label, key=key, use_container_width=True)
 
-    # Neues Event (Manager)
-    if is_mgr:
+def render_cashflow_home():
+    ensure_cashflow_schema()
+
+    user = st.session_state.get("username") or "unknown"
+    role = st.session_state.get("role") or "guest"
+    mgr  = is_manager(user, role)
+
+    # --- Schritt 1: Event wählen/neu anlegen ---
+    col1, col2 = st.columns([1,2])
+    day = col1.date_input("Event-Datum", value=st.session_state.get("cf_day") or datetime.date.today(), key="cf_day")
+    ev_opts = list_events_for_day(day)
+    choose_label = "— Event auswählen —" if not ev_opts else ev_opts[0][1] + f" ({ev_opts[0][2]})"
+    sel = col2.selectbox("Event auswählen", options=[("", choose_label)] + [(str(eid), f"{name} ({stt})") for eid, name, stt in ev_opts],
+                         index=0, key="cf_select_event", label_visibility="visible")
+
+    # Neuer Event (Wizard Schritt 2 – Einheiten)
+    if mgr:
         with st.expander("➕ Neues Event anlegen", expanded=False):
-            n1, n2 = st.columns([2,1])
-            new_name = n1.text_input("Eventname (neu)", key="cf_new_event_name", placeholder="z. B. OZ / Halloween")
-            create_btn = n2.button("Event anlegen", type="primary", use_container_width=True, disabled=not new_name)
-            if create_btn:
-                ev_id = create_or_get_event(day, new_name, st.session_state.get("username") or "unknown")
-                st.session_state["cf_event_id"] = ev_id
-                st.success("Event angelegt und aktiv gesetzt.")
+            new_name = st.text_input("Eventname", key="cf_new_name", placeholder="z. B. OZ / Halloween")
+            caps = meta_caps()
+            st.caption(f"Maximal laut Betrieb: Bars={caps['bars']} | Kassen={caps['registers']} | Garderoben={caps['cloakrooms']}")
+            c1,c2,c3 = st.columns(3)
+            bars = c1.number_input("Bars heute", min_value=0, max_value=caps["bars"], step=1, value=min( max(1, caps["bars"]), caps["bars"] ))
+            regs = c2.number_input("Kassen heute", min_value=0, max_value=caps["registers"], step=1, value=min(1, caps["registers"]))
+            clo  = c3.number_input("Garderoben heute", min_value=0, max_value=caps["cloakrooms"], step=1, value=min(1, caps["cloakrooms"]))
+            if st.button("Event anlegen", type="primary", use_container_width=True, disabled=(not new_name)):
+                eid = get_or_create_event(day, new_name, user)
+                upsert_event_units(eid, bars, regs, clo, user)
+                st.session_state["cf_event_id"] = eid
+                st.success("Event wurde angelegt und Einheiten fixiert.")
                 st.rerun()
 
-    # 2) Aktives Event anzeigen
-    ev_id = st.session_state.get("cf_event_id")
-    if not ev_id:
-        st.info("Bitte Event auswählen oder anlegen.")
+    # Auswahl übernehmen (existierendes Event)
+    if sel and sel != "":
+        st.session_state["cf_event_id"] = int(sel)
+
+    eid = st.session_state.get("cf_event_id")
+    if not eid:
+        st.info("Kein Event/Tag ausgewählt.")
         return
 
-    evt = get_event(ev_id)
-    if not evt:
-        st.warning("Event nicht gefunden – bitte erneut wählen.")
+    ev = get_event(eid)
+    if not ev:
+        st.warning("Event nicht gefunden – bitte erneut auswählen.")
         st.session_state.pop("cf_event_id", None)
         return
 
-    _, ev_day, ev_name, ev_status, *_ = evt
-    st.markdown(f"**Aktives Event:** {ev_name} – {ev_day} {_status_badge(ev_status)}", unsafe_allow_html=True)
+    _, ev_day, ev_name, ev_status, *_ = ev
+    st.markdown(
+        f"**Aktives Event:** {ev_name} – {ev_day} "
+        f"{BADGE_OPEN if ev_status=='open' else BADGE_DONE}",
+        unsafe_allow_html=True
+    )
 
-    # Löschen (nur Manager)
-    if is_mgr:
-        del_col, _sp = st.columns([1, 5])
-        if del_col.button("🗑️ Event löschen", use_container_width=True):
-            delete_event(ev_id)
-            st.success("Event gelöscht.")
-            st.session_state.pop("cf_event_id", None)
-            st.rerun()
+    # Event löschen (nur wenn open)
+    if mgr and ev_status == "open":
+        colD,_ = st.columns([1,3])
+        if colD.button("🗑️ Event löschen", help="Nur möglich solange Event nicht freigegeben ist."):
+            ok = delete_event_if_open(eid)
+            if ok:
+                st.success("Event gelöscht.")
+                st.session_state.pop("cf_event_id", None)
+                st.rerun()
+            else:
+                st.error("Event kann nicht gelöscht werden (vermutlich bereits freigegeben).")
 
-    # 3) Einheiten (Kacheln)
-    cnt = counts_from_meta()
-
-    # --- Debug-Hinweis: hilft sofort zu sehen, ob Meta-Counts vorhanden sind ---
-    st.caption(f"Einheiten laut Admin: Bars={cnt['bars']} | Kassen={cnt['registers']} | Garderoben={cnt['cloakrooms']}")
-
-    if cnt["bars"] + cnt["registers"] + cnt["cloakrooms"] == 0:
-        st.warning("Keine Einheiten konfiguriert – bitte unter Admin → Betrieb definieren.")
+    st.markdown("### Einheiten")
+    units = list_active_units(eid)
+    if not units:
+        st.info("Für dieses Event wurden noch keine Einheiten gesetzt (Betriebsleiter → Neues Event anlegen).")
         return
 
-    def _tile(lbl: str, sub: str, key: str, done: bool = False):
-        badge = "<span style='font-size:11px;opacity:.7'>(offen)</span>" if not done else "<span style='font-size:11px;opacity:.9'>✅ gespeichert</span>"
-        with st.container(border=True):
-            st.markdown(f"**{lbl}**<br><span style='opacity:.75;font-size:12px'>{sub}</span><br>{badge}", unsafe_allow_html=True)
-            return st.button("Bearbeiten", key=key, use_container_width=True)
+    # Sichtbarkeit: Manager sieht alle; andere nur ihre zugewiesenen Nummern
+    allowed = allowed_unit_numbers(user)
+    cols = st.columns(3)
 
-    st.markdown("#### Einheiten")
-
-    # Sichtbarkeit: Manager sieht alles; ansonsten nur eigene Typen
-    show_bar  = is_mgr or is_bar
-    show_cash = is_mgr or is_kas
-    show_clo  = is_mgr or is_clo
-
-    # Bars
-    if show_bar and cnt["bars"]:
-        st.caption("Bars")
-        cols = st.columns(min(4, max(1, cnt["bars"])))
-        ci = 0
-        for i in range(1, cnt["bars"] + 1):
-            with cols[ci]:
-                if _tile(f"Bar {i}", "Umsatz & Voucher erfassen", key=f"tile_bar_{ev_id}_{i}"):
-                    st.session_state["cf_unit"] = ("bar", i)
-                    st.session_state["cf_active_tab"] = "wizard"
-                    st.session_state["cf_nav_from"] = "tile"
-                    st.rerun()
-            ci = (ci + 1) % len(cols)
-
-    # Kassen
-    if show_cash and cnt["registers"]:
-        st.caption("Kassen")
-        cols = st.columns(min(4, max(1, cnt["registers"])))
-        ci = 0
-        for i in range(1, cnt["registers"] + 1):
-            with cols[ci]:
-                if _tile(f"Kassa {i}", "Bar/Unbar (Karten) erfassen", key=f"tile_cash_{ev_id}_{i}"):
-                    st.session_state["cf_unit"] = ("cash", i)
-                    st.session_state["cf_active_tab"] = "wizard"
-                    st.session_state["cf_nav_from"] = "tile"
-                    st.rerun()
-            ci = (ci + 1) % len(cols)
-
-    # Garderoben
-    if show_clo and cnt["cloakrooms"]:
-        st.caption("Garderoben")
-        cols = st.columns(min(4, max(1, cnt["cloakrooms"])))
-        ci = 0
-        for i in range(1, cnt["cloakrooms"] + 1):
-            with cols[ci]:
-                if _tile(f"Garderobe {i}", "Jacken/Taschen erfassen", key=f"tile_cloak_{ev_id}_{i}"):
-                    st.session_state["cf_unit"] = ("cloak", i)
-                    st.session_state["cf_active_tab"] = "wizard"
-                    st.session_state["cf_nav_from"] = "tile"
-                    st.rerun()
-            ci = (ci + 1) % len(cols)
+    ci = 0
+    for utype, uno, is_done in units:
+        if not mgr:
+            if uno not in allowed.get(utype, []):
+                continue
+        subtitle = {
+            "bar":   "Umsatz & Voucher erfassen",
+            "cash":  "Bar/Unbar (Karten) erfassen",
+            "cloak": "Jacken/Taschen erfassen",
+        }[utype]
+        foot = BADGE_DONE if is_done else BADGE_OPEN
+        with cols[ci]:
+            if _tile(f"{utype.upper()} {uno}", subtitle, foot, "Bearbeiten", key=f"cf_open_{eid}_{utype}_{uno}"):
+                st.session_state["cf_unit"] = (utype, uno)
+                st.session_state["cf_active_tab"] = "wizard"
+                st.rerun()
+        ci = (ci + 1) % len(cols)
