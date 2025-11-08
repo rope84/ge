@@ -64,22 +64,54 @@ def _get_or_create_event(day: datetime.date, name: str, user: str) -> int:
         cn.commit()
         return c.lastrowid
 
+def _find_event(day: datetime.date, name: Optional[str] = None) -> Optional[int]:
+    """Sucht vorhandenes Event an diesem Tag (optional mit Namen)."""
+    _ensure_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        if name and str(name).strip():
+            row = c.execute(
+                "SELECT id FROM events WHERE event_date=? AND name=? ORDER BY id DESC LIMIT 1",
+                (day.isoformat(), name.strip()),
+            ).fetchone()
+            if row:
+                return row[0]
+        # Fallback: irgendein Event an dem Tag (z. B. wenn Name unbekannt/abweichend)
+        row = c.execute(
+            "SELECT id FROM events WHERE event_date=? ORDER BY id DESC LIMIT 1",
+            (day.isoformat(),),
+        ).fetchone()
+        return row[0] if row else None
+
 def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool):
     st.subheader("🏁 Übersicht")
 
-    # Event wählen / anlegen (nur Betriebsleiter)
+    # Event wählen / anlegen
     col1, col2 = st.columns([1,2])
     day = col1.date_input("Event-Datum", value=st.session_state.get("cf_day") or datetime.date.today(), key="cf_day")
     name = col2.text_input("Eventname", value=st.session_state.get("cf_name") or "", key="cf_name")
 
+    # Aktionen je Rolle
     if is_mgr:
-        if st.button("▶️ Event öffnen/fortsetzen", type="primary", use_container_width=True, disabled=(not name or not day)):
+        confirm = st.checkbox("Ich bestätige Datum & Eventnamen und starte/öffne den Tag.", key="cf_confirm_start")
+        disabled = not (confirm and name and day)
+        if st.button("🚀 Tag starten / Event öffnen", type="primary", use_container_width=True, disabled=disabled):
             ev_id = _get_or_create_event(day, name, st.session_state.get("username") or "unknown")
             st.session_state["cf_event_id"] = ev_id
             st.success("Event aktiv.")
             st.rerun()
     else:
         st.caption("Event wird vom Betriebsleiter freigegeben. Danach kannst du deine Einheit bearbeiten.")
+        # Nicht-Manager können ein bereits angelegtes Event laden
+        disabled = not (name and day)
+        if st.button("🔄 Event laden", use_container_width=True, disabled=disabled):
+            ev_id = _find_event(day, name)
+            if ev_id:
+                st.session_state["cf_event_id"] = ev_id
+                st.success("Event geladen.")
+                st.rerun()
+            else:
+                st.info("Für dieses Datum (und den Namen) wurde noch kein Event gefunden.")
 
     # Aktives Event anzeigen
     ev_id = st.session_state.get("cf_event_id")
@@ -98,7 +130,7 @@ def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool)
     _, ev_day, ev_name, ev_status = evt
     st.success(f"Aktives Event: **{ev_name}** am **{ev_day}** (Status: {ev_status})")
 
-    # Kacheln je Einheit (nur sichtbare/zugewiesene)
+    # Kacheln je Einheit
     cnt = _counts()
     if cnt["bars"] + cnt["registers"] + cnt["cloakrooms"] == 0:
         st.warning("Keine Einheiten konfiguriert – bitte unter Admin → Betrieb definieren.")
@@ -106,11 +138,12 @@ def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool)
 
     def _tile(label: str, subtitle: str, key: str) -> bool:
         with st.container(border=True):
-            st.markdown(f"**{label}**  \n<span style='opacity:.7;font-size:12px'>{subtitle}</span>", unsafe_allow_html=True)
+            st.markdown(
+                f"**{label}**  \n<span style='opacity:.7;font-size:12px'>{subtitle}</span>",
+                unsafe_allow_html=True
+            )
             return st.button("Bearbeiten", key=key, use_container_width=True)
 
-    # Sichtbarkeitslogik (einfach): Leiter sehen nur ihren Typ, Mgr alles
-    # → Wenn du pro User noch konkrete Unit-Zuweisungen nutzt, ergänzen (units decoding).
     # Bars
     if is_mgr or is_bar:
         st.caption("Bars")
