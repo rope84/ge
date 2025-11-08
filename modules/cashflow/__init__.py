@@ -1,56 +1,75 @@
+# modules/cashflow/__init__.py
 import streamlit as st
-from .models import ensure_cashflow_schema
+
+# Diese drei Module müssen existieren
 from .home import render_cashflow_home
 from .wizard import render_cashflow_wizard
 from .review import render_cashflow_review
-from .utils import user_has_function
 
-def render_cashflow():
-    # Login erforderlich
+# Optionale Utils – wenn vorhanden, verwenden wir sie
+try:
+    from .utils import user_has_function  # type: ignore
+except Exception:
+    def user_has_function(username: str, fn_name: str) -> bool:
+        # Fallback: Admin sieht alles, sonst einfache Heuristik
+        role = (st.session_state.get("role") or "").lower()
+        if role == "admin":
+            return True
+        return False
+
+def _tab_index_from_state(labels: list[str]) -> int:
+    """Wähle initialen Tab anhand von st.session_state['cf_active_tab']."""
+    pref = (st.session_state.get("cf_active_tab") or "").lower()
+    mapping = {
+        "home": 0,
+        "übersicht": 0,
+        "wizard": 1,
+        "review": 2,
+        "review & freigabe": 2,
+    }
+    idx = mapping.get(pref, 0)
+    # falls weniger Tabs angezeigt werden, auf Bereich begrenzen
+    return min(idx, max(0, len(labels) - 1))
+
+def render_cashflow(current_user: str = "", current_role: str = "", scope: str = ""):
+    """Einheitlicher Entry-Point (mit optionalen Parametern, passend zu app.py)."""
     if not st.session_state.get("auth"):
         st.error("Bitte einloggen.")
         return
 
-    # DB-Schema sicherstellen
-    ensure_cashflow_schema()
-
-    st.markdown("### 💰 Abrechnung")
-
-    username = st.session_state.get("username", "") or ""
-    # Rollen prüfen (Admin wird in user_has_function() automatisch als True gewertet)
-    is_mgr = user_has_function(username, "Betriebsleiter")
+    username = current_user or st.session_state.get("username") or ""
+    # Rollen-Feststellung
+    is_mgr = user_has_function(username, "Betriebsleiter") or user_has_function(username, "Admin")
     is_bar = user_has_function(username, "Barleiter")
     is_kas = user_has_function(username, "Kassa")
     is_clo = user_has_function(username, "Garderobe")
 
-    # Tabs zusammenstellen
-    labels, keys = [], []
+    st.markdown("### 💰 Abrechnung")
 
-    labels.append("🏁 Übersicht"); keys.append("home")
-    if is_mgr or is_bar or is_kas or is_clo:
-        labels.append("🧭 Wizard"); keys.append("wizard")
-    if is_mgr:
-        labels.append("🗂️ Review & Freigabe"); keys.append("review")
+    # Sichtbare Tabs je nach Funktion
+    labels: list[str] = ["🏁 Übersicht", "🧭 Wizard"]
+    show_review = bool(is_mgr)
+    if show_review:
+        labels.append("🗂️ Review & Freigabe")
 
-    # Aktiven Tab aus Session
-    active_key = st.session_state.get("cf_active_tab") or "home"
-    try:
-        active_idx = keys.index(active_key)
-    except ValueError:
-        active_idx = 0
-
+    # Initialen Tab anhand State wählen
+    initial_index = _tab_index_from_state(labels)
     st_tabs = st.tabs(labels)
 
-    for idx, which in enumerate(keys):
-        with st_tabs[idx]:
-            if which == "home":
-                # WICHTIG: Flags durchreichen
-                render_cashflow_home(is_mgr=is_mgr, is_bar=is_bar, is_kas=is_kas, is_clo=is_clo)
-            elif which == "wizard":
-                render_cashflow_wizard()
-            elif which == "review":
-                render_cashflow_review()
+    # Übersicht
+    with st_tabs[0]:
+        render_cashflow_home(
+            is_mgr=is_mgr,
+            is_bar=is_bar,
+            is_kas=is_kas,
+            is_clo=is_clo,
+        )
 
-    # Wenn der Wizard aus Home angewählt wurde, im nächsten Render direkt dorthin springen
-    if st.session_state.get("cf_active_tab") == "wizard" and active_key != "wizard":
-        st.experimental_rerun()
+    # Wizard
+    with st_tabs[1]:
+        render_cashflow_wizard()
+
+    # Review & Freigabe (nur Manager)
+    if show_review:
+        with st_tabs[2]:
+            render_cashflow_review()
