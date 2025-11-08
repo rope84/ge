@@ -74,15 +74,18 @@ def login_screen():
             return
 
         try:
-            ok = getattr(auth, "_do_login")(u, p)  # nutzt core.auth (oder root auth, je nach Import)
-        except Exception as e:
+            ok, role, functions = getattr(auth, "_do_login")(u, p)  # <- WICHTIG: entpacken
+        except Exception:
             st.error("Login-Fehler. Siehe Logs/Konsole.")
             return
 
-        if ok:
-            # Rolle & weitere Session-Werte werden in auth._do_login gesetzt.
+        if ok is True:
+            # Rolle & restliche Session wurden in _do_login gesetzt.
+            # Optionaler Fallback, falls nichts gesetzt wäre:
             if not st.session_state.get("role"):
-                st.session_state["role"] = "user"
+                st.session_state["role"] = role or "user"
+            if not st.session_state.get("scope"):
+                st.session_state["scope"] = functions or ""
             st.rerun()
         else:
             st.error("❌ Falscher Benutzername oder Passwort")
