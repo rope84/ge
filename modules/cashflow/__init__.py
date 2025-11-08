@@ -6,47 +6,75 @@ from .wizard import render_cashflow_wizard
 from .review import render_cashflow_review
 from .utils import user_has_function
 
-def render_cashflow():
-    # Zugriff: mind. irgendeine Funktion, typischerweise Barleiter/Betriebsleiter/Kassa/Garderobe
+def _is_manager(username: str) -> bool:
+    """Betriebsleiter-Logik inkl. Admin-Fallback & Session-Role."""
+    # DB-Funktionen
+    if user_has_function(username, "Betriebsleiter"):
+        return True
+    if user_has_function(username, "Admin"):  # Admin zählt als Manager
+        return True
+    # Session-Rolle (Fallback, falls functions-Feld leer ist)
+    return (st.session_state.get("role", "").lower() == "admin")
+
+def _is_bar(username: str) -> bool:
+    return user_has_function(username, "Barleiter")
+
+def _is_cash(username: str) -> bool:
+    # Benenne hier so, wie deine Function wirklich heißt (z.B. "Kassa" oder "Kassier")
+    return user_has_function(username, "Kassa") or user_has_function(username, "Kassier")
+
+def _is_cloak(username: str) -> bool:
+    return user_has_function(username, "Garderobe")
+
+def render_cashflow(*_args, **_kwargs):
+    """
+    Tolerante Signatur (nimmt beliebige Args), damit sie mit app.py kompatibel ist,
+    egal ob render_cashflow(), render_cashflow(user, role) oder (user, role, scope) aufgerufen wird.
+    """
+    # Zugriff nur wenn eingeloggt
     if not st.session_state.get("auth"):
         st.error("Bitte einloggen.")
         return
 
-    # Schema sicherstellen
+    # Schema sicherstellen (events, cashflow_item, audit, ...)
     ensure_cashflow_schema()
 
     st.markdown("### 💰 Abrechnung")
 
-    # Rollen-basierte Tabs
-    is_mgr  = user_has_function(st.session_state.get("username",""), "Betriebsleiter")
-    is_bar  = user_has_function(st.session_state.get("username",""), "Barleiter")
-    is_kas  = user_has_function(st.session_state.get("username",""), "Kassa")
-    is_clo  = user_has_function(st.session_state.get("username",""), "Garderobe")
+    username = st.session_state.get("username", "") or ""
+    is_mgr  = _is_manager(username)
+    is_bar  = _is_bar(username)
+    is_kas  = _is_cash(username)
+    is_clo  = _is_cloak(username)
 
-    # Sichtbare Tabs je nach Funktion
-    tabs = []
+    # Tabs zusammenstellen
     labels = []
+    which  = []
 
-    # Alle sehen die Übersicht (Kacheln) – dort greifen Filter/Assignments
+    # Übersicht sehen alle – hier stehen die Kacheln (Bars/Kassen/Garderobe)
     labels.append("🏁 Übersicht")
-    tabs.append("home")
+    which.append("home")
 
-    # Leiter sehen ihren Wizard
-    if is_bar or is_kas or is_clo or is_mgr:
+    # Wizard für alle operativen Rollen ODER Manager
+    if is_mgr or is_bar or is_kas or is_clo:
         labels.append("🧭 Wizard")
-        tabs.append("wizard")
+        which.append("wizard")
 
-    # Betriebsleiter sieht Review/Finalisierung
+    # Review & Freigabe nur für Manager/Betriebsleiter/Admin
     if is_mgr:
         labels.append("🗂️ Review & Freigabe")
-        tabs.append("review")
+        which.append("review")
+
+    # Falls jemand gar keine passende Funktion hat, wenigstens die Übersicht und Hinweis zeigen
+    if len(labels) == 1:  # nur Übersicht
+        st.info("Du hast aktuell keine Abrechnungs-Funktion zugewiesen. Bitte Admin/Betriebsleiter kontaktieren.")
 
     st_tabs = st.tabs(labels)
-    for idx, which in enumerate(tabs):
-        with st_tabs[idx]:
-            if which == "home":
+    for i, w in enumerate(which):
+        with st_tabs[i]:
+            if w == "home":
                 render_cashflow_home()
-            elif which == "wizard":
+            elif w == "wizard":
                 render_cashflow_wizard()
-            elif which == "review":
+            elif w == "review":
                 render_cashflow_review()
