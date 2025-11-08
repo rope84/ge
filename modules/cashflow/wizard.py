@@ -17,7 +17,7 @@ def _ensure_schema():
                 event_id  INTEGER NOT NULL,
                 unit_type TEXT NOT NULL,   -- bar|cash|cloak
                 unit_no   INTEGER NOT NULL,
-                field     TEXT NOT NULL,   -- cash,pos1,pos2,pos3,voucher,tables | card | coats_eur,bags_eur
+                field     TEXT NOT NULL,
                 value     REAL  NOT NULL DEFAULT 0,
                 updated_by TEXT,
                 updated_at TEXT,
@@ -31,7 +31,7 @@ def _get_prices() -> tuple[float, float]:
         c = cn.cursor()
         coat = c.execute("SELECT value FROM meta WHERE key='conf_coat_price'").fetchone()
         bag  = c.execute("SELECT value FROM meta WHERE key='conf_bag_price'").fetchone()
-    def _f(x, dflt): 
+    def _f(x, dflt):
         try:
             return float(str(x[0]).replace(",", ".")) if x and x[0] is not None else dflt
         except Exception:
@@ -67,18 +67,19 @@ def _save(event_id: int, unit_type: str, unit_no: int, data: Dict[str, float], u
             """, (event_id, unit_type, unit_no, k, float(v or 0.0), username, now))
         cn.commit()
 
-def render_cashflow_wizard():
+def render_cashflow_wizard() -> bool:
+    """Gibt True zurück, wenn 'Zur Übersicht' gedrückt wurde (damit der Aufrufer die View umschaltet)."""
     _ensure_schema()
 
     ev_id = st.session_state.get("cf_event_id")
     if not ev_id:
-        st.info("Kein Event angelegt. Bitte Betriebsleiter startet den Tag.")
-        return
+        st.info("Kein Event angelegt. (Betriebsleiter: bitte unter 'Event' starten.)")
+        return False
 
     sel = st.session_state.get("cf_unit")
     if not sel:
-        st.caption("Wähle im Tab **Übersicht** eine Einheit aus.")
-        return
+        st.caption("Wähle unter 'Einheiten & Kacheln' eine Einheit aus.")
+        return False
 
     unit_type, unit_no = sel
     username = st.session_state.get("username") or "unknown"
@@ -122,12 +123,11 @@ def render_cashflow_wizard():
         payload = {"coats_eur": coats_eur, "bags_eur": bags_eur}
 
     colA, colB = st.columns([1,1])
+    back_pressed = colA.button("⬅️ Zur Übersicht", use_container_width=True, key=f"back_{ev_id}_{unit_type}_{unit_no}")
+    saved = colB.button("💾 Speichern", type="primary", use_container_width=True, key=f"save_{ev_id}_{unit_type}_{unit_no}")
 
-    if colA.button("⬅️ Zur Übersicht", use_container_width=True, key=f"back_{ev_id}_{unit_type}_{unit_no}"):
-        st.session_state.pop("cf_unit", None)
-        st.session_state["cf_active_tab"] = "home"
-        st.rerun()
-
-    if colB.button("💾 Speichern", type="primary", use_container_width=True, key=f"save_{ev_id}_{unit_type}_{unit_no}"):
+    if saved:
         _save(ev_id, unit_type, unit_no, payload, username)
         st.success("Gespeichert.")
+
+    return bool(back_pressed)
