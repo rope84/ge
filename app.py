@@ -1,4 +1,4 @@
-# app.py (nur komplett gezeigt, falls du 1:1 ersetzen willst)
+# app.py
 import streamlit as st
 import traceback
 import importlib, inspect, datetime
@@ -178,11 +178,12 @@ def route():
         return
 
     try:
+        # Dynamische Aufrufe nach Modul
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-            # NEU: Cashflow ohne Positionsargumente aufrufen
+            # <-- einzig relevante Änderung: ohne Argumente aufrufen
             mod_func()
 
         elif mod_key == "dashboard":
