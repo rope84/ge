@@ -1,94 +1,52 @@
 # modules/cashflow/wizard.py
 import streamlit as st
-from .models import get_current_event, get_entry, save_entry
-from .utils import user_has_function
+import datetime
 from core.db import conn
 
-def _bar_form(data: dict) -> tuple[dict, float]:
-    c1,c2,c3,c4 = st.columns(4)
-    data["cash"] = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(data.get("cash",0.0)))
-    data["pos1"] = c2.number_input("Bankomat 1 (€)", min_value=0.0, step=50.0, value=float(data.get("pos1",0.0)))
-    data["pos2"] = c3.number_input("Bankomat 2 (€)", min_value=0.0, step=50.0, value=float(data.get("pos2",0.0)))
-    data["pos3"] = c4.number_input("Bankomat 3 (€)", min_value=0.0, step=50.0, value=float(data.get("pos3",0.0)))
-    r2c1, r2c2 = st.columns([2,1])
-    data["voucher"] = r2c1.number_input("Voucher (€)", min_value=0.0, step=10.0, value=float(data.get("voucher",0.0)))
-    data["tables"]  = int(r2c2.number_input("Tische (Stk)", min_value=0, step=1, value=int(data.get("tables",0))))
-    total = float(data["cash"])+float(data["pos1"])+float(data["pos2"])+float(data["pos3"])+float(data["voucher"])
-    st.metric("Umsatz gesamt", f"{total:,.2f} €")
-    return data, total
-
-def _kassa_form(data: dict) -> tuple[dict,float]:
-    c1,c2 = st.columns(2)
-    data["cash"] = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(data.get("cash",0.0)))
-    data["card"] = c2.number_input("Unbar / Bankomat (€)", min_value=0.0, step=50.0, value=float(data.get("card",0.0)))
-    total = float(data["cash"])+float(data["card"])
-    st.metric("Umsatz gesamt", f"{total:,.2f} €")
-    return data, total
-
-def _cloak_form(data: dict) -> tuple[dict,float]:
-    c1,c2 = st.columns(2)
-    data["coats_eur"] = c1.number_input("Jacken/Kleidung (€)", min_value=0.0, step=10.0, value=float(data.get("coats_eur",0.0)))
-    data["bags_eur"]  = c2.number_input("Taschen/Rucksäcke (€)", min_value=0.0, step=10.0, value=float(data.get("bags_eur",0.0)))
-    total = float(data["coats_eur"])+float(data["bags_eur"])
-    st.metric("Umsatz gesamt", f"{total:,.2f} €")
-    return data, total
-
-def _get_unit(unit_id: int):
-    with conn() as cn:
-        c = cn.cursor()
-        row = c.execute("SELECT id, unit_type, unit_index, name FROM units WHERE id=?", (unit_id,)).fetchone()
-        return dict(zip(["id","unit_type","unit_index","name"], row)) if row else None
-
-def _user_may_edit(unit: dict) -> bool:
-    u = st.session_state.get("username","")
-    # Betriebsleiter darf alles
-    if user_has_function(u, "Betriebsleiter"):
-        return True
-    # Leiter muss genau dieser Unit zugeordnet sein
-    with conn() as cn:
-        c = cn.cursor()
-        r = c.execute("SELECT 1 FROM user_units WHERE user_name=? AND unit_id=?", (u, unit["id"])).fetchone()
-        return bool(r)
-
 def render_cashflow_wizard():
-ev_id = st.session_state.get("cf_event_id")
-if not ev_id:
-    # dieselben 5–10 Zeilen wie in home.py unter dem Expander,
-    # oder einfach:
-    st.info("Kein Event angelegt. Bitte im Tab **Übersicht** oben den Tag starten.")
-    return
+    """
+    Wizard für Barleiter, Kassierer und Garderobenpersonal.
+    Hier werden die Eingaben für ihre jeweilige Einheit gemacht.
+    """
+    st.header("🧭 Wizard – Abrechnung erfassen")
 
-    unit_id = st.session_state.get("cashflow_unit_id")
-    if not unit_id:
-        st.info("Bitte Einheit in der Übersicht auswählen.")
+    # Prüfen, ob ein Event aktiv ist
+    ev_id = st.session_state.get("cf_event_id")
+    if not ev_id:
+        st.info("Kein Event angelegt. Bitte im Tab **Übersicht** oben den Tag starten.")
         return
 
-    unit = _get_unit(unit_id)
-    if not unit:
-        st.error("Unbekannte Einheit.")
+    # Eventdaten laden
+    with conn() as cn:
+        c = cn.cursor()
+        evt = c.execute(
+            "SELECT id, event_date, name, status FROM events WHERE id=?", (ev_id,)
+        ).fetchone()
+
+    if not evt:
+        st.warning("Event nicht gefunden – bitte im Tab Übersicht neu öffnen.")
+        st.session_state.pop("cf_event_id", None)
         return
 
-    st.subheader(f"🧭 Wizard – {unit['name']} ({unit['unit_type']})")
-    may = _user_may_edit(unit)
-    if not may:
-        st.error("Keine Berechtigung für diese Einheit.")
+    _, ev_day, ev_name, ev_status = evt
+    st.success(f"Aktives Event: **{ev_name}** am **{ev_day}** (Status: {ev_status})")
+
+    # Aktuelle Einheit merken oder neu wählen
+    unit_sel = st.session_state.get("cf_unit")
+    if not unit_sel:
+        st.info("Bitte wähle deine Einheit über den Tab **Übersicht**.")
         return
 
-    entry = get_entry(ev["id"], unit_id) or {"data":{}, "total":0.0}
-    data = dict(entry["data"])
+    unit_type, unit_no = unit_sel
+    st.write(f"Bearbeite Einheit: **{unit_type.upper()} #{unit_no}**")
 
-    if unit["unit_type"] == "bar":
-        data, total = _bar_form(data)
-    elif unit["unit_type"] == "kassa":
-        data, total = _kassa_form(data)
-    else:
-        data, total = _cloak_form(data)
+    # Placeholder für tatsächliche Eingabelogik (kommt später)
+    st.caption("Hier folgt die Eingabelogik für Umsätze, Voucher etc. (noch im Aufbau).")
 
-    c1, c2 = st.columns([1,3])
-    if c1.button("💾 Speichern", use_container_width=True):
-        save_entry(ev["id"], unit_id, st.session_state.get("username",""), data, total, st.session_state.get("username",""))
-        st.success("Gespeichert.")
-    if c2.button("✅ Abgabe (heute)", use_container_width=True):
-        # identisch zu Speichern – kannst du mit Flag ergänzen, wenn du „abgegeben“ markieren willst
-        save_entry(ev["id"], unit_id, st.session_state.get("username",""), data, total, st.session_state.get("username",""))
-        st.success("Abgegeben.")
+    col1, col2 = st.columns(2)
+    if col1.button("⬅️ Zurück zur Übersicht", use_container_width=True):
+        st.session_state.pop("cf_unit", None)
+        st.rerun()
+
+    if col2.button("💾 Speichern", type="primary", use_container_width=True):
+        st.success("Eingaben gespeichert (Demo).")
