@@ -8,23 +8,26 @@ def render_login_form(app_name: str, app_version: str):
     Kein set_page_config hier – das macht app.py!
     """
 
-    # --- Hardening & sauberes Layout nur für die Login-Ansicht ---
+    # --- Hardening & Layout nur für die Login-Ansicht ---
     st.markdown("""
         <style>
         /* Sidebar auf der Login-Seite ausblenden */
         [data-testid="stSidebar"] { display: none !important; }
+
         /* Haupt-Container schmal & zentriert, auch bei layout="wide" */
         .block-container {
             max-width: 460px !important;
             padding-top: 10vh !important;
             margin: 0 auto !important;
         }
+
         /* dezenter Verlaufshintergrund */
         body {
             background: radial-gradient(900px 500px at 20% -10%, #1e1b4b33, transparent),
                         radial-gradient(900px 500px at 120% 0%, #0f766e33, transparent),
                         #0b0b12;
         }
+
         .ge-card {
             background: rgba(20,20,28,0.96);
             border: 1px solid rgba(255,255,255,0.06);
@@ -38,6 +41,13 @@ def render_login_form(app_name: str, app_version: str):
         .ge-badge { display:inline-block; font-size:.72rem; padding:2px 8px;
                     border-radius:999px; border:1px solid #ffffff22; opacity:.85; }
         .ge-footer{ text-align:center; opacity:.65; font-size:.8rem; margin-top: 14px; }
+
+        /* “leere Pillen/Buttons” verstecken */
+        [data-testid="baseButton-secondary"]:has(> div:empty),
+        button:has(span:empty) { display:none !important; }
+
+        /* Deko/Toolbar von Streamlit ausblenden */
+        [data-testid="stDecoration"], [data-testid="stToolbar"] { display:none !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -50,7 +60,6 @@ def render_login_form(app_name: str, app_version: str):
     with c2:
         st.markdown(f"<div style='text-align:right' class='ge-badge'>v{app_version}</div>", unsafe_allow_html=True)
 
-}
     # Form = Enter-Submit + keine Widget-Key-Konflikte
     with st.form("ge_login_form", clear_on_submit=False):
         username = st.text_input("Benutzername", placeholder="z. B. oklub", key="ge_user")
