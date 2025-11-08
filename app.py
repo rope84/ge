@@ -182,13 +182,15 @@ def route():
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-            # Neues Cashflow-/Abrechnungsmodul
-            from modules.cashflow import cashflow
-            cashflow.render_cashflow(
-                st.session_state.username,
-                st.session_state.role,
-                st.session_state.get("scope", "")
-            )
+    # Cashflow braucht den eingeloggten User (für Rechte & Unit-Zuweisungen)
+    user = st.session_state.get("username") or "unknown"
+    role = st.session_state.get("role") or "guest"
+    scope = st.session_state.get("scope") or ""
+    try:
+        mod_func(user, role, scope)
+    except TypeError:
+        # Fallback für ältere Signaturen
+        mod_func(user, role)
 
         elif mod_key == "dashboard":
             mod_func()
