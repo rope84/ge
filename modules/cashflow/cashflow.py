@@ -1,3 +1,4 @@
+# modules/cashflow.py
 import streamlit as st
 import datetime
 from typing import Dict, List, Tuple, Optional
@@ -34,22 +35,22 @@ def _get_user(func_username: str) -> Optional[tuple]:
         ).fetchone()
         return row
 
-def _user_rights(username: str) -> Dict:
-    """Return dict with is_admin_manager flag and allowed units per type."""
+def _user_rights(username: str, session_role: str = "") -> Dict:
+    """
+    is_admin_manager True wenn:
+      - users.functions enthält 'admin' ODER 'betriebsleiter'
+      - ODER session_role == 'admin' (Fallback, wenn DB-Spalte leer ist)
+    """
     row = _get_user(username)
     if not row:
-        return {"is_admin_manager": False, "units": {"bar": [], "cash": [], "cloak": []}}
+        return {"is_admin_manager": session_role.lower() == "admin",
+                "units": {"bar": [], "cash": [], "cloak": []}}
 
     _, _, functions, units = row
     funcs = [f.strip().lower() for f in (functions or "").split(",") if f.strip()]
-    is_admin_manager = ("admin" in funcs) or ("betriebsleiter" in funcs)
-
-    # Barleiter darf nur die ihm zugewiesenen Units
+    is_admin_manager = ("admin" in funcs) or ("betriebsleiter" in funcs) or (session_role.lower() == "admin")
     allowed = _decode_units(units or "")
-    if is_admin_manager:
-        # volle Sicht → wir geben leere Listen zurück; später wird „alle“ anhand Meta aufgelöst
-        return {"is_admin_manager": True, "units": allowed}
-    return {"is_admin_manager": False, "units": allowed}
+    return {"is_admin_manager": is_admin_manager, "units": allowed}
 
 # -----------------------------
 # Meta: Unit Counts & Prices
@@ -71,11 +72,11 @@ def _get_counts() -> Dict[str, int]:
     def _first_int(keys: List[str], default: int = 0) -> int:
         for k in keys:
             v = _get_meta(k)
-            if v is not None:
+            if v is not None and str(v).strip() != "":
                 try:
                     return max(0, int(float(str(v).strip())))
                 except Exception:
-                    pass
+                    continue
         return default
 
     return {
@@ -230,11 +231,6 @@ def _save_unit_values(event_id: int, unit_type: str, unit_no: int, data: Dict[st
 # UI Bits
 # -----------------------------
 
-def _tile(label: str, subtitle: str, key: str) -> bool:
-    with st.container(border=True):
-        st.markdown(f"**{label}**  \n<span style='opacity:.7;font-size:12px'>{subtitle}</span>", unsafe_allow_html=True)
-        return st.button("Öffnen", key=key, use_container_width=True)
-
 def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str, int]):
     st.subheader("Einheiten")
     if counts["bars"] + counts["registers"] + counts["cloakrooms"] == 0:
@@ -242,15 +238,14 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         return
 
     is_mgr = rights["is_admin_manager"]
-    allowed = rights["units"]  # for non-managers
+    allowed = rights["units"]  # für Nicht-Manager
 
-    # Helper to decide visibility
     def _visible(unit_type: str, i: int) -> bool:
         if is_mgr:
             return True
         return i in allowed.get(unit_type, [])
 
-    # BAR tiles
+    # Bars
     if counts["bars"]:
         st.caption("Bars")
         cols = st.columns(min(4, max(1, counts["bars"])))
@@ -258,9 +253,12 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["bars"]+1):
             if not _visible("bar", i):
                 continue
-            if _tile(f"Bar {i}", "Umsatz & Voucher erfassen", key=f"open_bar_{i}"):
-                st.session_state["cf_unit"] = ("bar", i)
-                st.rerun()
+            with cols[ci]:
+                with st.container(border=True):
+                    st.markdown(f"**Bar {i}**  \n<span style='opacity:.7;font-size:12px'>Umsatz & Voucher erfassen</span>", unsafe_allow_html=True)
+                    if st.button("Öffnen", key=f"open_bar_{i}", use_container_width=True):
+                        st.session_state["cf_unit"] = ("bar", i)
+                        st.rerun()
             ci = (ci + 1) % len(cols)
 
     # Kassen
@@ -271,9 +269,12 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["registers"]+1):
             if not _visible("cash", i):
                 continue
-            if _tile(f"Kassa {i}", "Bar/Unbar (Karten) erfassen", key=f"open_cash_{i}"):
-                st.session_state["cf_unit"] = ("cash", i)
-                st.rerun()
+            with cols[ci]:
+                with st.container(border=True):
+                    st.markdown(f"**Kassa {i}**  \n<span style='opacity:.7;font-size:12px'>Bar/Unbar (Karten) erfassen</span>", unsafe_allow_html=True)
+                    if st.button("Öffnen", key=f"open_cash_{i}", use_container_width=True):
+                        st.session_state["cf_unit"] = ("cash", i)
+                        st.rerun()
             ci = (ci + 1) % len(cols)
 
     # Garderoben
@@ -284,9 +285,12 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["cloakrooms"]+1):
             if not _visible("cloak", i):
                 continue
-            if _tile(f"Garderobe {i}", "Jacken/Taschen erfassen", key=f"open_cloak_{i}"):
-                st.session_state["cf_unit"] = ("cloak", i)
-                st.rerun()
+            with cols[ci]:
+                with st.container(border=True):
+                    st.markdown(f"**Garderobe {i}**  \n<span style='opacity:.7;font-size:12px'>Jacken/Taschen erfassen</span>", unsafe_allow_html=True)
+                    if st.button("Öffnen", key=f"open_cloak_{i}", use_container_width=True):
+                        st.session_state["cf_unit"] = ("cloak", i)
+                        st.rerun()
             ci = (ci + 1) % len(cols)
 
 def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, locked: bool = False):
@@ -340,13 +344,16 @@ def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, loc
 # Entry
 # -----------------------------
 
-def render_cashflow(current_user: str, current_role: str = "", scope: str = ""):
+def render_cashflow(current_user: str = "", current_role: str = "", scope: str = ""):
+    """
+    Entry-Point. Parameter sind optional, damit app.py fallbacken kann.
+    """
     _ensure_tables()
 
     st.title("💰 Abrechnung (Cashflow)")
     st.caption("Event auswählen/eröffnen → Einheiten erfassen → Tagesfreigabe")
 
-    # Event Header (Datum + Eventname Pflicht)
+    # Event Header
     day_default = st.session_state.get("cf_day") or datetime.date.today()
     event_name_default = st.session_state.get("cf_name") or ""
 
@@ -354,17 +361,16 @@ def render_cashflow(current_user: str, current_role: str = "", scope: str = ""):
     day = col1.date_input("Event-Datum", value=day_default, key="cf_day")
     name = col2.text_input("Eventname", value=event_name_default, key="cf_name", placeholder="z. B. OZ / Halloween")
 
-    rights = _user_rights(current_user)
+    rights = _user_rights(current_user or "", current_role or "")
     is_mgr = rights["is_admin_manager"]
 
     colX, colY = st.columns([1,1])
     open_pressed = colX.button("▶️ Event öffnen/fortsetzen", type="primary", use_container_width=True, disabled=(not name or not day))
     if open_pressed:
-        st.session_state["cf_event_id"] = _get_or_create_event(day, name, current_user)
+        st.session_state["cf_event_id"] = _get_or_create_event(day, name, current_user or "unknown")
         st.session_state.pop("cf_unit", None)
         st.rerun()
 
-    # Falls Event schon im State (Fortsetzung)
     ev_id = st.session_state.get("cf_event_id")
     if not ev_id:
         st.info("Bitte **Datum** und **Eventname** angeben und auf „Event öffnen/fortsetzen“ klicken.")
@@ -390,9 +396,9 @@ def render_cashflow(current_user: str, current_role: str = "", scope: str = ""):
 
     if unit_sel:
         utype, uno = unit_sel
-        _unit_editor(ev_id, utype, uno, current_user, locked=locked)
+        _unit_editor(ev_id, utype, uno, current_user or "unknown", locked=locked)
     else:
-        _unit_overview(ev_id, current_user, rights, counts)
+        _unit_overview(ev_id, current_user or "unknown", rights, counts)
 
     # Manager Controls
     st.markdown("---")
@@ -400,7 +406,7 @@ def render_cashflow(current_user: str, current_role: str = "", scope: str = ""):
         c1, c2, c3 = st.columns([1,1,2])
         if ev_status != "approved":
             if c1.button("✅ Tag freigeben (abschließen)", use_container_width=True):
-                _set_event_status(ev_id, "approved", current_user)
+                _set_event_status(ev_id, "approved", current_user or "unknown")
                 st.success("Tag freigegeben. Einträge sind für Nicht-Manager gesperrt.")
                 st.rerun()
         else:
