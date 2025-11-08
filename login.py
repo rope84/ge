@@ -37,7 +37,7 @@ def render_login_form(app_name: str, app_version: str):
     st.markdown(f"<h1>{app_name} 🍸</h1>", unsafe_allow_html=True)
     st.markdown(f"<p>Version {app_version}</p>", unsafe_allow_html=True)
 
-    username = st.text_input("Benutzername", placeholder="z. B. oklub")
+    username = st.text_input("Benutzername", placeholder="z. B. username")
     password = st.text_input("Passwort", type="password", placeholder="••••••••")
     pressed = st.button("Einloggen", use_container_width=True)
 
