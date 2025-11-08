@@ -1,47 +1,40 @@
 # modules/cashflow/review.py
 import streamlit as st
-from .models import get_current_event, list_units, get_entry, save_entry, close_event
-from .utils import user_has_function
+from core.db import conn
 
-def _card(label: str, right: str):
-    st.markdown(f"""
-    <div style="display:flex;justify-content:space-between;gap:12px;
-                padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.03);
-                box-shadow:0 6px 16px rgba(0,0,0,0.12);">
-      <div><b>{label}</b></div>
-      <div style="opacity:.85">{right}</div>
-    </div>
-    """, unsafe_allow_html=True)
+def _list_events_for_day(day_iso: str):
+    with conn() as cn:
+        c = cn.cursor()
+        return c.execute(
+            "SELECT id, name, status FROM events WHERE event_date=? ORDER BY created_at DESC, id DESC",
+            (day_iso,),
+        ).fetchall()
+
+def _load_event(event_id: int):
+    with conn() as cn:
+        c = cn.cursor()
+        return c.execute(
+            "SELECT id, event_date, name, status, created_by, created_at, approved_by, approved_at "
+            "FROM events WHERE id=?",
+            (event_id,),
+        ).fetchone()
 
 def render_cashflow_review():
-    u = st.session_state.get("username","")
-    if not user_has_function(u, "Betriebsleiter"):
-        st.error("Nur Betriebsleiter.")
+    st.subheader("🗂️ Review & Freigabe")
+
+    ev_id = st.session_state.get("cf_event_id")
+    if not ev_id:
+        st.info("Kein Event aktiv. Wähle im Tab **Übersicht** ein Event oder lege eines an.")
         return
 
-    ev = get_current_event()
-    if not ev:
-        st.info("Kein Event.")
+    row = _load_event(ev_id)
+    if not row:
+        st.warning("Event nicht gefunden. Wähle im Tab **Übersicht** ein Event.")
         return
 
-    st.subheader(f"🗂️ Review – {ev['event_date']} · {ev['event_name']} · Status `{ev['status']}`")
-    units = list_units()
-    totals = 0.0
-    for uinfo in units:
-        entry = get_entry(ev["id"], uinfo["id"])
-        t = 0.0 if not entry else float(entry.get("total",0.0))
-        totals += t
-        _card(uinfo["name"], f"{t:,.2f} €")
-        if st.button("Öffnen", key=f"rv_open_{uinfo['id']}"):
-            st.session_state["cashflow_unit_id"] = uinfo["id"]
-            st.session_state["nav_choice"] = "Abrechnung"
-            st.rerun()
-
-    st.metric("GESAMT", f"{totals:,.2f} €")
+    _id, ev_day, ev_name, ev_status, created_by, created_at, approved_by, approved_at = row
+    st.markdown(f"**Event:** {ev_name}  \n**Datum:** {ev_day}  \n**Status:** {ev_status}")
 
     st.divider()
-    if ev["status"] == "IN_PROGRESS":
-        if st.button("✅ Tag final freigeben (CLOSED)", use_container_width=True):
-            close_event(ev["id"])
-            st.success("Freigegeben & geschlossen.")
-            st.rerun()
+    st.caption("Hier kannst du die Tagessummen und ggf. Details darstellen (Summen je Einheit etc.). "
+               "Die eigentliche Freigabe-Logik kannst du hier ergänzen (Statuswechsel, Locks, Audit-Log).")
