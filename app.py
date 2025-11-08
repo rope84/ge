@@ -1,50 +1,45 @@
 # app.py
 import streamlit as st
 import traceback
+import importlib, inspect, datetime
+from pathlib import Path
 
 from core.db import setup_db
 from core.auth import seed_admin_if_empty
 from core import auth
-from core.ui_theme import use_theme, page_header, small_footer
+from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
-
-def go_to_profile():
-    st.session_state["nav_choice"] = "Profil"
-    st.rerun()
 
 # ---------------- Initial Setup ----------------
 setup_db()
 seed_admin_if_empty()
 
-# ---------------- Dynamic Module Import (with hot reload) ----------------
-import importlib, inspect, datetime
-from pathlib import Path
-
+# ---------------- Dynamic Module Import (mit Hot Reload) ----------------
 def import_modules():
-    modules, errors = {}, {}
-    loaded_meta = {}  # optionales Debugging
+    modules, errors, loaded_meta = {}, {}, {}
 
     def try_import(qualified_name: str):
-        base = qualified_name.split(".")[-1]  # z.B. "start" aus "modules.start"
+        base = qualified_name.split(".")[-1]
         try:
             mod = importlib.import_module(qualified_name)
-            mod = importlib.reload(mod)  # Hot-Reload
-
-            fn = getattr(mod, f"render_{base}")  # erwartet z.B. render_start()
+            mod = importlib.reload(mod)
+            fn = getattr(mod, f"render_{base}")  # z. B. render_start()
             modules[base] = fn
 
             file_path = Path(inspect.getfile(mod))
             loaded_meta[base] = {
                 "file": str(file_path),
-                "mtime": datetime.datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(sep=" ", timespec="seconds"),
+                "mtime": datetime.datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(
+                    sep=" ", timespec="seconds"
+                ),
                 "qualified": qualified_name,
             }
         except Exception as e:
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-    # WICHTIG: cashflow statt abrechnung laden
+    # wichtig: cashflow statt abrechnung laden
     for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
         try_import(f"modules.{mod_name}")
 
@@ -84,7 +79,6 @@ def login_screen():
 
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
-    from core.config import APP_NAME, APP_VERSION
     st.markdown(
         f"""
         <style>
@@ -98,14 +92,14 @@ def fixed_footer():
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
-            z-index: 0;                 /* liegt hinter dem Content */
-            pointer-events: none;       /* blockiert keine Klicks/Eingaben */
+            z-index: 0;
+            pointer-events: none;
         }}
         .footer a {{
             color: #bbb;
             text-decoration: none;
             font-weight: bold;
-            pointer-events: auto;       /* Links bleiben klickbar */
+            pointer-events: auto;
         }}
         .footer a:hover {{
             color: white;
@@ -125,26 +119,21 @@ def fixed_footer():
 # ---------------- Sidebar ----------------
 def sidebar():
     with st.sidebar:
-        # Query-Param (Footer-Link) abfangen
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
             st.query_params.clear()
 
-        # Einmal-Navigation über Flag abfangen (aus Modulen wie start.py)
         if st.session_state.get("nav_to"):
             st.session_state["nav_choice"] = st.session_state.pop("nav_to")
 
-        # Optionaler Profil-Flag
         if st.session_state.get("go_profile"):
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
 
-        # Header
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        # Navigation (an nav_choice gebunden)
         display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
         if st.session_state.role == "admin":
             display_pages.append("Admin-Cockpit")
@@ -166,8 +155,7 @@ def sidebar():
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
-    # Mapping: Anzeige "Abrechnung" -> Modul cashflow
-    "abrechnung": "cashflow",
+    "abrechnung": "cashflow",  # Anzeige -> Modul cashflow
     "dashboard": "dashboard",
     "inventur": "inventur",
     "profil": "profile",
@@ -194,8 +182,13 @@ def route():
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-            # Neues Abrechnungsmodul benötigt keine Parameter
-            mod_func()
+            # Neues Cashflow-/Abrechnungsmodul
+            from modules.cashflow import cashflow
+            cashflow.render_cashflow(
+                st.session_state.username,
+                st.session_state.role,
+                st.session_state.get("scope", "")
+            )
 
         elif mod_key == "dashboard":
             mod_func()
@@ -225,7 +218,7 @@ def route():
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-    use_theme()  # CSS erst NACH set_page_config
+    use_theme()
 
     if not st.session_state.auth:
         login_screen()
