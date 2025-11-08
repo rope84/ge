@@ -1,90 +1,97 @@
-# modules/cashflow/models.py
 import datetime
-from typing import Optional, Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from core.db import conn
 
-# Einheitentypen konsistent halten
-UNIT_TYPES = ("bar", "cash", "cloak")
-
+# ----------------------------
+# SCHEMA & BASIS
+# ----------------------------
 def ensure_cashflow_schema():
     with conn() as cn:
         c = cn.cursor()
-
         # Events
         c.execute("""
             CREATE TABLE IF NOT EXISTS events (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              event_date TEXT NOT NULL,
-              name TEXT NOT NULL,
-              status TEXT NOT NULL DEFAULT 'open',   -- open | approved | closed
-              created_by TEXT,
-              created_at TEXT,
-              approved_by TEXT,
-              approved_at TEXT
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'open',  -- open|approved|closed
+                created_by  TEXT,
+                created_at  TEXT,
+                approved_by TEXT,
+                approved_at TEXT
             )
         """)
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_day_name ON events(event_date,name)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_day_name ON events(event_date, name)")
 
-        # Event-Einheiten (aktiv & Status je Einheit)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS event_units (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              event_id INTEGER NOT NULL,
-              unit_type TEXT NOT NULL,               -- bar | cash | cloak
-              unit_no   INTEGER NOT NULL,
-              is_active INTEGER NOT NULL DEFAULT 1,  -- 1=aktiv an diesem Tag
-              is_done   INTEGER NOT NULL DEFAULT 0,  -- 1=Abrechnung erledigt
-              done_by   TEXT,
-              done_at   TEXT,
-              UNIQUE(event_id, unit_type, unit_no)
-            )
-        """)
-
-        # Einzelwerte (wie bisher)
+        # Erfasste Werte pro Einheit/Feld
         c.execute("""
             CREATE TABLE IF NOT EXISTS cashflow_item (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              event_id  INTEGER NOT NULL,
-              unit_type TEXT NOT NULL,
-              unit_no   INTEGER NOT NULL,
-              field     TEXT NOT NULL,               -- cash,pos1,pos2,pos3,voucher,tables | cash,card | coats_eur,bags_eur
-              value     REAL NOT NULL DEFAULT 0,
-              updated_by TEXT,
-              updated_at TEXT,
-              UNIQUE(event_id, unit_type, unit_no, field)
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id  INTEGER NOT NULL,
+                unit_type TEXT    NOT NULL,    -- bar|cash|cloak
+                unit_no   INTEGER NOT NULL,
+                field     TEXT    NOT NULL,    -- cash,pos1,pos2,pos3,voucher,tables | card | coats_eur,bags_eur
+                value     REAL    NOT NULL DEFAULT 0,
+                updated_by TEXT,
+                updated_at TEXT,
+                UNIQUE(event_id, unit_type, unit_no, field)
             )
         """)
 
-        # Audit (kurz)
+        # „Fertig“-Status je Einheit
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS cashflow_unit_status (
+                event_id  INTEGER NOT NULL,
+                unit_type TEXT    NOT NULL,
+                unit_no   INTEGER NOT NULL,
+                done_by   TEXT,
+                done_at   TEXT,
+                PRIMARY KEY (event_id, unit_type, unit_no)
+            )
+        """)
+
+        # NEU: Event-spezifische Konfiguration der Einheiten
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS cashflow_event_config (
+                event_id    INTEGER PRIMARY KEY,
+                bars        INTEGER NOT NULL DEFAULT 0,
+                registers   INTEGER NOT NULL DEFAULT 0,
+                cloakrooms  INTEGER NOT NULL DEFAULT 0,
+                updated_by  TEXT,
+                updated_at  TEXT
+            )
+        """)
+
+        # Audit
         c.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              ts TEXT NOT NULL,
-              user TEXT,
-              action TEXT,
-              details TEXT
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                user TEXT,
+                action TEXT,
+                details TEXT
             )
         """)
-
         cn.commit()
 
-def audit(user: str, action: str, details: str):
-    with conn() as cn:
-        c = cn.cursor()
-        c.execute("INSERT INTO audit_log(ts,user,action,details) VALUES(?,?,?,?)",
-                  (datetime.datetime.now().isoformat(timespec="seconds"), user, action, details))
-        cn.commit()
+# ----------------------------
+# META-GRENZEN (Admin-Cockpit)
+# ----------------------------
+_META_UNIT_KEYS = {
+    "bars":       ["bars_count", "business_bars", "num_bars"],
+    "registers":  ["registers_count", "business_registers", "num_registers", "kassen_count"],
+    "cloakrooms": ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"],
+}
 
-# --- Meta Helpers ---
-def get_meta(key: str) -> Optional[str]:
+def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
         c = cn.cursor()
         r = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return r[0] if r else None
 
-def get_meta_int_any(keys: List[str], dflt: int = 0) -> int:
+def _first_int(keys: List[str], dflt: int = 0) -> int:
     for k in keys:
-        v = get_meta(k)
+        v = _get_meta(k)
         if v is not None and str(v).strip() != "":
             try:
                 return max(0, int(float(str(v).strip())))
@@ -92,110 +99,150 @@ def get_meta_int_any(keys: List[str], dflt: int = 0) -> int:
                 continue
     return dflt
 
-META_KEYS = {
-    "bars":       ["bars_count", "business_bars", "num_bars"],
-    "registers":  ["registers_count", "business_registers", "num_registers", "kassen_count"],
-    "cloakrooms": ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"],
-}
-
-def meta_caps() -> Dict[str,int]:
+def get_global_caps() -> Dict[str, int]:
+    """Obergrenzen aus Admin-Cockpit."""
     return {
-        "bars":       get_meta_int_any(META_KEYS["bars"], 0),
-        "registers":  get_meta_int_any(META_KEYS["registers"], 0),
-        "cloakrooms": get_meta_int_any(META_KEYS["cloakrooms"], 0),
+        "bars":       _first_int(_META_UNIT_KEYS["bars"], 0),
+        "registers":  _first_int(_META_UNIT_KEYS["registers"], 0),
+        "cloakrooms": _first_int(_META_UNIT_KEYS["cloakrooms"], 0),
     }
 
-# --- Event CRUD ---
-def get_or_create_event(day, name: str, username: str) -> int:
-    day_s = day.isoformat()
+# ----------------------------
+# EVENT-KONFIG (pro Event)
+# ----------------------------
+def get_event_config(event_id: int) -> Dict[str, int]:
     with conn() as cn:
         c = cn.cursor()
-        r = c.execute("SELECT id FROM events WHERE event_date=? AND name=?", (day_s, name.strip())).fetchone()
-        if r:
-            return r[0]
-        c.execute(
-            "INSERT INTO events(event_date,name,status,created_by,created_at) VALUES(?,?,?,?,?)",
-            (day_s, name.strip(), "open", username, datetime.datetime.now().isoformat(timespec="seconds"))
-        )
-        cn.commit()
-        eid = c.lastrowid
-    audit(username, "event_create", f"{day_s} | {name}")
-    return eid
+        r = c.execute("""
+            SELECT bars, registers, cloakrooms
+            FROM cashflow_event_config WHERE event_id=?
+        """, (event_id,)).fetchone()
+    if r:
+        return {"bars": int(r[0] or 0), "registers": int(r[1] or 0), "cloakrooms": int(r[2] or 0)}
+    # Fallback: solange nichts gespeichert wurde → globale Obergrenzen
+    return get_global_caps()
 
-def list_events_for_day(day) -> List[Tuple[int,str,str]]:
-    day_s = day.isoformat()
-    with conn() as cn:
-        c = cn.cursor()
-        rows = c.execute(
-            "SELECT id,name,status FROM events WHERE event_date=? ORDER BY id ASC", (day_s,)
-        ).fetchall()
-    return rows
+def upsert_event_config(event_id: int, bars: int, registers: int, cloakrooms: int, username: str):
+    caps = get_global_caps()
+    # Sicherheitskappung auf Admin-Grenzen
+    bars       = max(0, min(int(bars),       caps["bars"]))
+    registers  = max(0, min(int(registers),  caps["registers"]))
+    cloakrooms = max(0, min(int(cloakrooms), caps["cloakrooms"]))
 
-def get_event(eid: int):
-    with conn() as cn:
-        c = cn.cursor()
-        return c.execute("SELECT id,event_date,name,status,created_by,created_at,approved_by,approved_at FROM events WHERE id=?",
-                         (eid,)).fetchone()
-
-def delete_event_if_open(eid: int) -> bool:
-    with conn() as cn:
-        c = cn.cursor()
-        st = c.execute("SELECT status FROM events WHERE id=?", (eid,)).fetchone()
-        if not st or st[0] != "open":
-            return False
-        c.execute("DELETE FROM cashflow_item WHERE event_id=?", (eid,))
-        c.execute("DELETE FROM event_units WHERE event_id=?", (eid,))
-        c.execute("DELETE FROM events WHERE id=?", (eid,))
-        cn.commit()
-    return True
-
-def approve_event(eid: int, user: str):
-    with conn() as cn:
-        c = cn.cursor()
-        c.execute("UPDATE events SET status='approved', approved_by=?, approved_at=? WHERE id=?",
-                  (user, datetime.datetime.now().isoformat(timespec="seconds"), eid))
-        cn.commit()
-    audit(user, "event_approve", f"{eid}")
-
-# --- Event Units ---
-def upsert_event_units(eid: int, bars: int, regs: int, cloaks: int, user: str):
-    with conn() as cn:
-        c = cn.cursor()
-        # Lösche existierende Einträge und setze neu (klare Quelle)
-        c.execute("DELETE FROM event_units WHERE event_id=?", (eid,))
-        # Bars
-        for i in range(1, bars+1):
-            c.execute("INSERT INTO event_units(event_id,unit_type,unit_no,is_active) VALUES(?,?,?,1)", (eid, "bar", i))
-        # Kassen
-        for i in range(1, regs+1):
-            c.execute("INSERT INTO event_units(event_id,unit_type,unit_no,is_active) VALUES(?,?,?,1)", (eid, "cash", i))
-        # Garderoben
-        for i in range(1, cloaks+1):
-            c.execute("INSERT INTO event_units(event_id,unit_type,unit_no,is_active) VALUES(?,?,?,1)", (eid, "cloak", i))
-        cn.commit()
-    audit(user, "event_units_set", f"{eid} -> bars={bars},regs={regs},cloaks={cloaks}")
-
-def list_active_units(eid: int) -> List[Tuple[str,int,int]]:
-    # return [(type, no, is_done)]
-    with conn() as cn:
-        c = cn.cursor()
-        rows = c.execute("""
-            SELECT unit_type, unit_no, is_done
-            FROM event_units
-            WHERE event_id=? AND is_active=1
-            ORDER BY unit_type, unit_no
-        """, (eid,)).fetchall()
-    return [(r[0], int(r[1]), int(r[2])) for r in rows]
-
-def mark_unit_done(eid: int, utype: str, uno: int, done: bool, user: str):
+    now = datetime.datetime.now().isoformat(timespec="seconds")
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
-           UPDATE event_units
-           SET is_done=?, done_by=?, done_at=?
-           WHERE event_id=? AND unit_type=? AND unit_no=? AND is_active=1
-        """, (1 if done else 0, user if done else None,
-              datetime.datetime.now().isoformat(timespec="seconds") if done else None,
-              eid, utype, uno))
+            INSERT INTO cashflow_event_config(event_id, bars, registers, cloakrooms, updated_by, updated_at)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(event_id)
+            DO UPDATE SET bars=excluded.bars,
+                          registers=excluded.registers,
+                          cloakrooms=excluded.cloakrooms,
+                          updated_by=excluded.updated_by,
+                          updated_at=excluded.updated_at
+        """, (event_id, bars, registers, cloakrooms, username, now))
+        c.execute(
+            "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+            (now, username, "event_config_upsert", f"event={event_id} bars={bars} registers={registers} cloakrooms={cloakrooms}")
+        )
         cn.commit()
-    audit(user, "unit_done_toggle", f"{eid} {utype}#{uno} -> {done}")
+
+# praktische Helfer
+def counts_for_event(event_id: int) -> Dict[str, int]:
+    """Liefer die pro-Event-Zahlen, fällt sonst auf Admin-Grenzen zurück."""
+    return get_event_config(event_id)
+
+# ----------------------------
+# EVENTS & LÖSCHEN
+# ----------------------------
+def create_or_get_event(day: datetime.date, name: str, username: str) -> int:
+    ensure_cashflow_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        row = c.execute(
+            "SELECT id FROM events WHERE event_date=? AND name=?",
+            (day.isoformat(), name.strip()),
+        ).fetchone()
+        if row:
+            return int(row[0])
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        c.execute(
+            "INSERT INTO events(event_date, name, status, created_by, created_at) VALUES(?,?,?,?,?)",
+            (day.isoformat(), name.strip(), "open", username, now),
+        )
+        ev_id = c.lastrowid
+        c.execute(
+            "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+            (now, username, "event_create", f"{day.isoformat()} | {name}")
+        )
+        cn.commit()
+        return int(ev_id)
+
+def event_info(event_id: int) -> Optional[Tuple]:
+    with conn() as cn:
+        c = cn.cursor()
+        return c.execute("SELECT id, event_date, name, status FROM events WHERE id=?", (event_id,)).fetchone()
+
+def set_event_status(event_id: int, status: str, username: str):
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        if status == "approved":
+            c.execute(
+                "UPDATE events SET status=?, approved_by=?, approved_at=? WHERE id=?",
+                (status, username, now, event_id),
+            )
+        else:
+            c.execute("UPDATE events SET status=? WHERE id=?", (status, event_id))
+        c.execute(
+            "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+            (now, username, "event_status", f"{event_id} -> {status}")
+        )
+        cn.commit()
+
+def delete_event(event_id: int, username: str):
+    """Komplettlöschen eines Events inkl. Items/Status/Config."""
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("DELETE FROM cashflow_item WHERE event_id=?", (event_id,))
+        c.execute("DELETE FROM cashflow_unit_status WHERE event_id=?", (event_id,))
+        c.execute("DELETE FROM cashflow_event_config WHERE event_id=?", (event_id,))
+        c.execute("DELETE FROM events WHERE id=?", (event_id,))
+        c.execute(
+            "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+            (now, username, "event_delete", f"event={event_id}")
+        )
+        cn.commit()
+
+# ----------------------------
+# TOTALS / STATUS (für Übersichten)
+# ----------------------------
+def unit_total(event_id: int, unit_type: str, unit_no: int) -> float:
+    with conn() as cn:
+        c = cn.cursor()
+        rows = c.execute("""
+            SELECT field, value FROM cashflow_item
+            WHERE event_id=? AND unit_type=? AND unit_no=?
+        """, (event_id, unit_type, unit_no)).fetchall()
+    vals = {k: 0.0 for k in ["cash","pos1","pos2","pos3","voucher","tables","card","coats_eur","bags_eur"]}
+    for f, v in rows:
+        try:
+            vals[f] = float(v)
+        except Exception:
+            pass
+    if unit_type == "bar":
+        return vals["cash"] + vals["pos1"] + vals["pos2"] + vals["pos3"] + vals["voucher"]
+    if unit_type == "cash":
+        return vals["cash"] + vals["card"]
+    return vals["coats_eur"] + vals["bags_eur"]
+
+def unit_done(event_id: int, unit_type: str, unit_no: int) -> bool:
+    with conn() as cn:
+        c = cn.cursor()
+        r = c.execute("""
+            SELECT 1 FROM cashflow_unit_status
+            WHERE event_id=? AND unit_type=? AND unit_no=?
+        """, (event_id, unit_type, unit_no)).fetchone()
+        return r is not None
