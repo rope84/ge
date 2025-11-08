@@ -60,8 +60,8 @@ init_session()
 
 # ---------------- Auth ----------------
 def logout():
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
+    # robuster & kürzer
+    st.session_state.clear()
     init_session()
     st.rerun()
 
@@ -80,8 +80,7 @@ def login_screen():
             return
 
         if ok:
-            # WICHTIG: Rolle & restliche Session werden in auth._do_login gesetzt.
-            # NICHT hier überschreiben. Nur Fallback setzen, falls ausnahmsweise leer.
+            # Rolle & weitere Session-Werte werden in auth._do_login gesetzt.
             if not st.session_state.get("role"):
                 st.session_state["role"] = "user"
             st.rerun()
@@ -114,7 +113,7 @@ def fixed_footer():
         }}
         .footer a:hover {{
             color: white;
-            text-decoration: underline;
+            text-decoration: underline.
         }}
         </style>
 
@@ -129,6 +128,10 @@ def fixed_footer():
 
 # ---------------- Sidebar ----------------
 def sidebar():
+    # Guard: Sidebar nur im eingeloggten Zustand rendern
+    if not st.session_state.get("auth"):
+        return
+
     with st.sidebar:
         query_params = st.query_params
         if "nav_choice" in query_params:
@@ -185,7 +188,9 @@ def route():
 
     if not mod_func:
         st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
-        st.code(mod_err or "Unbekannter Fehler", language="text")
+        if mod_err:
+            with st.expander(f"Details zu Ladefehler '{mod_key}'", expanded=False):
+                st.code(mod_err, language="text")
         return
 
     try:
@@ -194,7 +199,7 @@ def route():
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-            # <-- einzig relevante Änderung: ohne Argumente aufrufen
+            # ohne Argumente aufrufen (neues Paket-Interface)
             mod_func()
 
         elif mod_key == "dashboard":
