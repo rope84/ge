@@ -1,110 +1,121 @@
 # modules/cashflow/wizard.py
 import streamlit as st
-import datetime
-from .models import get_event, list_active_units, mark_unit_done
-from core.db import conn
 
-BAR_FIELDS = ["cash", "pos1", "pos2", "pos3", "voucher", "tables"]
-CASH_FIELDS = ["cash", "card"]
-CLOAK_FIELDS = ["coats_eur", "bags_eur"]
-
-def _load_values(eid: int, t: str, no: int):
-    with conn() as cn:
-        c = cn.cursor()
-        rows = c.execute("""
-           SELECT field,value FROM cashflow_item
-           WHERE event_id=? AND unit_type=? AND unit_no=?
-        """,(eid,t,no)).fetchall()
-    out = {f:0.0 for f in (BAR_FIELDS if t=="bar" else CASH_FIELDS if t=="cash" else CLOAK_FIELDS)}
-    for f,v in rows:
-        try: out[f]=float(v)
-        except: pass
-    return out
-
-def _save_values(eid: int, t: str, no: int, data: dict, user: str):
-    now = datetime.datetime.now().isoformat(timespec="seconds")
-    with conn() as cn:
-        c = cn.cursor()
-        for k,v in data.items():
-            c.execute("""
-              INSERT INTO cashflow_item(event_id,unit_type,unit_no,field,value,updated_by,updated_at)
-              VALUES(?,?,?,?,?,?,?)
-              ON CONFLICT(event_id,unit_type,unit_no,field)
-              DO UPDATE SET value=excluded.value, updated_by=excluded.updated_by, updated_at=excluded.updated_at
-            """,(eid,t,no,k,float(v or 0),user,now))
-        cn.commit()
-
-def _editor(eid: int, t: str, no: int, locked: bool):
-    vals = _load_values(eid,t,no)
-
-    if t=="bar":
-        c1,c2,c3,c4 = st.columns(4)
-        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked)
-        pos1 = c2.number_input("Bankomat 1 (€)", min_value=0.0, step=50.0, value=float(vals["pos1"]), disabled=locked)
-        pos2 = c3.number_input("Bankomat 2 (€)", min_value=0.0, step=50.0, value=float(vals["pos2"]), disabled=locked)
-        pos3 = c4.number_input("Bankomat 3 (€)", min_value=0.0, step=50.0, value=float(vals["pos3"]), disabled=locked)
-        v1,v2 = st.columns([2,1])
-        voucher = v1.number_input("Voucher (€)", min_value=0.0, step=10.0, value=float(vals["voucher"]), disabled=locked)
-        tables  = v2.number_input("Tische (Stk)", min_value=0, step=1, value=int(vals["tables"]), disabled=locked)
-        total = cash+pos1+pos2+pos3+voucher
-        st.info(f"Umsatz gesamt: **{total:,.2f} €**")
-        return {"cash":cash,"pos1":pos1,"pos2":pos2,"pos3":pos3,"voucher":voucher,"tables":tables}
-
-    if t=="cash":
-        c1,c2 = st.columns(2)
-        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked)
-        card = c2.number_input("Unbar / Karte (€)", min_value=0.0, step=50.0, value=float(vals["card"]), disabled=locked)
-        st.info(f"Kassa gesamt: **{cash+card:,.2f} €**")
-        return {"cash":cash,"card":card}
-
-    # cloak
-    c1,c2 = st.columns(2)
-    coats = c1.number_input("Jacken/Kleidung (€)", min_value=0.0, step=10.0, value=float(vals["coats_eur"]), disabled=locked)
-    bags  = c2.number_input("Taschen/Rucksäcke (€)", min_value=0.0, step=10.0, value=float(vals["bags_eur"]), disabled=locked)
-    st.info(f"Garderobe gesamt: **{coats+bags:,.2f} €**")
-    return {"coats_eur":coats, "bags_eur":bags}
+from .models import (
+    get_event,
+    load_unit_values,
+    save_unit_values,
+    coat_bag_prices,       # returns (coat_price, bag_price)
+)
 
 def render_cashflow_wizard():
+    st.subheader("🧭 Erfassung")
+
     eid = st.session_state.get("cf_event_id")
+    sel = st.session_state.get("cf_unit")   # expected: (unit_type, unit_no)
+
     if not eid:
-        st.info("Kein Event angelegt. Bitte Betriebsleiter startet den Tag.")
+        st.info("Kein Event ausgewählt.")
         return
 
     ev = get_event(eid)
-    _, _, _, status, *_ = ev
-    locked = (status == "approved")
+    if not ev:
+        st.warning("Event nicht gefunden – bitte in der Übersicht erneut wählen.")
+        st.session_state.pop("cf_event_id", None)
+        return
 
-    st.caption("Editor")
-    sel = st.session_state.get("cf_unit")
     if not sel:
-        # Falls nichts gewählt, für Manager die erste Einheit vorschlagen
-        units = list_active_units(eid)
-        if units:
-            st.session_state["cf_unit"] = (units[0][0], units[0][1])
-            sel = st.session_state["cf_unit"]
-        else:
-            st.info("Für dieses Event sind keine Einheiten aktiv.")
-            return
+        st.info("Bitte in der Übersicht eine Einheit auswählen (Bar/Kassa/Garderobe).")
+        return
 
-    t, no = sel
-    st.subheader(f"{t.upper()} {no}")
+    utype, uno = sel
+    _, ev_day, ev_name, ev_status, *_ = ev
+    locked = (ev_status == "approved") and (st.session_state.get("role","").lower() != "admin")
 
-    data = _editor(eid, t, no, locked)
-
-    colA, colB, colC = st.columns([1,1,1])
-    if colA.button("⬅️ Zur Übersicht"):
-        st.session_state.pop("cf_unit", None)
-        st.session_state["cf_active_tab"] = "home"
-        st.rerun()
-
-    if not locked:
-        if colB.button("💾 Speichern", type="primary"):
-            _save_values(eid, t, no, data, st.session_state.get("username") or "unknown")
-            st.success("Gespeichert.")
-
-        done_now = colC.toggle("✔️ Abrechnung erledigt", value=False, help="Setzt den Status dieser Einheit auf erledigt.")
-        if done_now:
-            mark_unit_done(eid, t, no, True, st.session_state.get("username") or "unknown")
-            st.session_state["cf_active_tab"] = "home"
+    # Header mit Back
+    c1, c2 = st.columns([1,3])
+    with c1:
+        if st.button("⬅️ Zur Übersicht", use_container_width=True, key=f"cf_wiz_back_{eid}_{utype}_{uno}"):
             st.session_state.pop("cf_unit", None)
-            st.rerun()
+            st.experimental_rerun()  # Streamlit v1.40+: st.rerun() wäre auch ok
+    with c2:
+        st.markdown(f"**Event:** {ev_name} – {ev_day}  |  **Einheit:** {utype.upper()} #{uno}")
+
+    # Bestehende Werte laden
+    vals = load_unit_values(eid, utype, uno)
+
+    # Editor je Typ
+    if utype == "bar":
+        c1, c2, c3, c4 = st.columns(4)
+        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("cash", 0.0)),
+                               disabled=locked, key=f"v_cash_bar_{eid}_{uno}")
+        pos1 = c2.number_input("Bankomat 1 (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("pos1", 0.0)),
+                               disabled=locked, key=f"v_pos1_bar_{eid}_{uno}")
+        pos2 = c3.number_input("Bankomat 2 (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("pos2", 0.0)),
+                               disabled=locked, key=f"v_pos2_bar_{eid}_{uno}")
+        pos3 = c4.number_input("Bankomat 3 (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("pos3", 0.0)),
+                               disabled=locked, key=f"v_pos3_bar_{eid}_{uno}")
+
+        v1, v2 = st.columns([2,1])
+        voucher = v1.number_input("Voucher (€)", min_value=0.0, step=10.0,
+                                  value=float(vals.get("voucher", 0.0)),
+                                  disabled=locked, key=f"v_voucher_bar_{eid}_{uno}")
+        tables  = v2.number_input("Tische (Stk)", min_value=0, step=1,
+                                  value=int(vals.get("tables", 0) or 0),
+                                  disabled=locked, key=f"v_tables_bar_{eid}_{uno}")
+
+        total = float(cash) + float(pos1) + float(pos2) + float(pos3) + float(voucher)
+        st.info(f"Umsatz gesamt: **{total:,.2f} €**")
+
+        payload = {
+            "cash": cash, "pos1": pos1, "pos2": pos2, "pos3": pos3,
+            "voucher": voucher, "tables": tables
+        }
+
+    elif utype == "cash":
+        c1, c2 = st.columns(2)
+        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("cash", 0.0)),
+                               disabled=locked, key=f"v_cash_cash_{eid}_{uno}")
+        card = c2.number_input("Unbar / Karte (€)", min_value=0.0, step=50.0,
+                               value=float(vals.get("card", 0.0)),
+                               disabled=locked, key=f"v_card_cash_{eid}_{uno}")
+        st.info(f"Kassa gesamt: **{(cash+card):,.2f} €**")
+
+        payload = {"cash": cash, "card": card}
+
+    else:  # cloak
+        coat_p, bag_p = coat_bag_prices()
+        c1, c2 = st.columns(2)
+        coats_eur = c1.number_input(f"Jacken/Kleidung (€) – Stückpreis {coat_p:.2f} €",
+                                    min_value=0.0, step=10.0,
+                                    value=float(vals.get("coats_eur", 0.0)),
+                                    disabled=locked, key=f"v_coats_cloak_{eid}_{uno}")
+        bags_eur  = c2.number_input(f"Taschen/Rucksäcke (€) – Stückpreis {bag_p:.2f} €",
+                                    min_value=0.0, step=10.0,
+                                    value=float(vals.get("bags_eur", 0.0)),
+                                    disabled=locked, key=f"v_bags_cloak_{eid}_{uno}")
+        total = coats_eur + bags_eur
+        try:
+            coats_qty = int(coats_eur // coat_p) if coat_p > 0 else 0
+            bags_qty  = int(bags_eur  // bag_p) if bag_p  > 0 else 0
+        except Exception:
+            coats_qty = bags_qty = 0
+        st.info(f"Garderobe gesamt: **{total:,.2f} €** (≈ Jacken {coats_qty} | Taschen {bags_qty})")
+
+        payload = {"coats_eur": coats_eur, "bags_eur": bags_eur}
+
+    # Actions
+    a, b = st.columns([1,1])
+    if a.button("💾 Speichern", type="primary", use_container_width=True,
+                key=f"cf_save_{eid}_{utype}_{uno}", disabled=locked):
+        save_unit_values(eid, utype, uno, payload, st.session_state.get("username") or "unknown")
+        st.success("Gespeichert.")
+
+    if b.button("⬅️ Zurück zur Übersicht", use_container_width=True, key=f"cf_back2_{eid}_{utype}_{uno}"):
+        st.session_state.pop("cf_unit", None)
+        st.experimental_rerun()
