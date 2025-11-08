@@ -11,6 +11,14 @@ from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
+# NEU: Import der Sicherung
+from core.auth import ensure_admin_consistency
+
+# ---------------- Initial Setup ----------------
+setup_db()
+seed_admin_if_empty()
+# NEU: Admin-Konsistenz sicherstellen (ohne Admin-UI)
+ensure_admin_consistency()
 # ---------------- Initial Setup ----------------
 setup_db()
 seed_admin_if_empty()
