@@ -14,26 +14,23 @@ def _status_badge(status: str) -> str:
     return f"<span style='background:{col}22;color:{col};border:1px solid {col}66;border-radius:999px;padding:2px 8px;font-size:11px'>{status}</span>"
 
 def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool):
-    # Überschrift bewusst schlank halten (Wunsch)
-    # st.subheader("🏁 Übersicht")  # entfernt
-
     # 1) Event-Datum + Auswahl/Anlage
     c1, c2 = st.columns([1, 2])
     day = c1.date_input("Event-Datum", value=st.session_state.get("cf_day") or datetime.date.today(), key="cf_day")
     with c2:
         existing = get_events_for_day(day)
-        names = [f"{e[1]} ({e[2]})" for e in existing]
-        idx = 0
         if existing:
-            opt = {names[i]: existing[i][0] for i in range(len(existing))}
-            sel = st.selectbox("Event auswählen", names, index=0, key="cf_select_event")
-            ev_id = opt[sel]
+            labels = [f"{name} ({status})" for (_id, name, status) in existing]
+            ids    = [ev_id for (ev_id, _n, _s) in existing]
+            sel = st.selectbox("Event auswählen", labels, index=0, key="cf_select_event")
+            # Map ausgewähltes Label -> id (gleicher Index)
+            ev_id = ids[labels.index(sel)]
             st.session_state["cf_event_id"] = ev_id
         else:
             st.info("Kein Event an diesem Tag vorhanden.")
 
+    # Neues Event (Manager)
     if is_mgr:
-        # Anlage eines zusätzlichen Events am gleichen Tag
         with st.expander("➕ Neues Event anlegen", expanded=False):
             n1, n2 = st.columns([2,1])
             new_name = n1.text_input("Eventname (neu)", key="cf_new_event_name", placeholder="z. B. OZ / Halloween")
@@ -68,25 +65,25 @@ def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool)
             st.session_state.pop("cf_event_id", None)
             st.rerun()
 
-    # 3) Einheiten-Kacheln
+    # 3) Einheiten (Kacheln)
     cnt = counts_from_meta()
+
+    # --- Debug-Hinweis: hilft sofort zu sehen, ob Meta-Counts vorhanden sind ---
+    st.caption(f"Einheiten laut Admin: Bars={cnt['bars']} | Kassen={cnt['registers']} | Garderoben={cnt['cloakrooms']}")
+
     if cnt["bars"] + cnt["registers"] + cnt["cloakrooms"] == 0:
         st.warning("Keine Einheiten konfiguriert – bitte unter Admin → Betrieb definieren.")
         return
 
     def _tile(lbl: str, sub: str, key: str, done: bool = False):
-        badge = "<span style='font-size:11px;opacity:.7'>(offen)</span>"
-        if done:
-            badge = "<span style='font-size:11px;opacity:.9'>✅ gespeichert</span>"
+        badge = "<span style='font-size:11px;opacity:.7'>(offen)</span>" if not done else "<span style='font-size:11px;opacity:.9'>✅ gespeichert</span>"
         with st.container(border=True):
-            st.markdown(f"**{lbl}**  {_status_badge('approved') if ev_status=='approved' else ''}<br>"
-                        f"<span style='opacity:.75;font-size:12px'>{sub}</span><br>{badge}",
-                        unsafe_allow_html=True)
+            st.markdown(f"**{lbl}**<br><span style='opacity:.75;font-size:12px'>{sub}</span><br>{badge}", unsafe_allow_html=True)
             return st.button("Bearbeiten", key=key, use_container_width=True)
 
     st.markdown("#### Einheiten")
 
-    # Sichtbare Typen je Rolle
+    # Sichtbarkeit: Manager sieht alles; ansonsten nur eigene Typen
     show_bar  = is_mgr or is_bar
     show_cash = is_mgr or is_kas
     show_clo  = is_mgr or is_clo
