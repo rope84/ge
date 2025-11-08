@@ -43,6 +43,29 @@ def seed_admin_if_empty():
             ))
             cn.commit()
 
+def ensure_admin_consistency():
+    """
+    Start-Up-Sicherung:
+    - Stellt sicher, dass es die Spalte 'functions' gibt
+    - Setzt für den Default-User 'oklub' die Functions auf 'Admin', wenn leer
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        # Spalte 'functions' sicherstellen
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+        if "functions" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+        # 'oklub' muss Admin-Funktion haben (falls versehentlich geleert)
+        c.execute("""
+            UPDATE users
+               SET functions = CASE
+                                WHEN TRIM(COALESCE(functions,'')) = '' THEN 'Admin'
+                                ELSE functions
+                               END
+             WHERE username = 'oklub'
+        """)
+        cn.commit()
+
 def _fetch_user(username: str) -> Optional[Dict]:
     with conn() as cn:
         c = cn.cursor()
