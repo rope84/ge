@@ -404,10 +404,12 @@ def _render_home():
             )
 
 # ---------------- Betrieb (Grundparameter) ----------------
+# ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
     section_title("🏢 Grundparameter des Betriebs")
 
-    keys = [
+    # bestehende Stammdaten
+    base_keys = [
         "business_name",
         "business_street",
         "business_zip",
@@ -419,26 +421,103 @@ def _render_business_admin():
         "business_capacity",
         "business_note",
     ]
-    values = _get_meta_many(keys)
+
+    # NEU: Einheiten-Zählwerte (mit kompatiblen Aliassen, falls früher anders benannt)
+    unit_keys = [
+        # Bars
+        "bars_count", "business_bars", "num_bars",
+        # Kassen
+        "registers_count", "business_registers", "num_registers", "kassen_count",
+        # Garderoben
+        "cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count",
+        # Optional: Garderoben-Preise (falls im Abrechnungsteil verwendet)
+        "conf_coat_price", "conf_bag_price",
+    ]
+
+    values = _get_meta_many(base_keys + unit_keys)
+
+    def _first_int(keys: list[str], default: int = 0) -> int:
+        for k in keys:
+            v = values.get(k)
+            if v is not None and str(v).strip() != "":
+                try:
+                    return max(0, int(float(str(v).strip())))
+                except Exception:
+                    continue
+        return default
+
+    def _first_float(keys: list[str], default: float = 0.0) -> float:
+        for k in keys:
+            v = values.get(k)
+            if v is not None and str(v).strip() != "":
+                try:
+                    return float(str(v).replace(",", "."))
+                except Exception:
+                    continue
+        return default
 
     with st.form("business_form"):
+        # Stammdaten
         a, b = st.columns([2, 2])
         name = a.text_input("Name des Betriebs", value=values.get("business_name") or "")
         phone = b.text_input("Telefon", value=values.get("business_phone") or "")
+
         c, d = st.columns([3, 1])
         street = c.text_input("Straße & Hausnummer", value=values.get("business_street") or "")
         zip_code = d.text_input("PLZ", value=values.get("business_zip") or "")
+
         city = st.text_input("Ort / Stadt", value=values.get("business_city") or "")
+
         e, f = st.columns(2)
         email = e.text_input("E-Mail", value=values.get("business_email") or "")
         uid = f.text_input("UID", value=values.get("business_uid") or "")
+
         g, h = st.columns(2)
         iban = g.text_input("IBAN", value=values.get("business_iban") or "")
-        capacity = h.number_input("Fassungsvermögen (Personen)", min_value=0, step=1, value=int(values.get("business_capacity") or 0))
+        capacity = h.number_input(
+            "Fassungsvermögen (Personen)", min_value=0, step=1,
+            value=int(values.get("business_capacity") or 0)
+        )
+
         note = st.text_input("Notiz (optional)", value=values.get("business_note") or "")
 
+        st.markdown("---")
+
+        # NEU: Einheiten-Konfiguration
+        section_title("🧩 Einheiten für Abrechnung")
+        u1, u2, u3 = st.columns(3)
+
+        bars_count = u1.number_input(
+            "Anzahl Bars",
+            min_value=0, step=1,
+            value=_first_int(["bars_count", "business_bars", "num_bars"], 0)
+        )
+        registers_count = u2.number_input(
+            "Anzahl Kassen",
+            min_value=0, step=1,
+            value=_first_int(["registers_count", "business_registers", "num_registers", "kassen_count"], 0)
+        )
+        cloakrooms_count = u3.number_input(
+            "Anzahl Garderoben",
+            min_value=0, step=1,
+            value=_first_int(["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"], 0)
+        )
+
+        # Optional: Garderoben-Preise
+        st.caption("Optional (nur falls im Abrechnungsteil benötigt)")
+        p1, p2 = st.columns(2)
+        conf_coat_price = p1.number_input(
+            "Preis pro Jacke/Kleidung (€)", min_value=0.0, step=0.5,
+            value=_first_float(["conf_coat_price"], 2.0)
+        )
+        conf_bag_price = p2.number_input(
+            "Preis pro Tasche/Rucksack (€)", min_value=0.0, step=0.5,
+            value=_first_float(["conf_bag_price"], 3.0)
+        )
+
         if st.form_submit_button("💾 Speichern", use_container_width=True):
-            _set_meta_many({
+            # Stammdaten speichern
+            to_save = {
                 "business_name": name,
                 "business_street": street,
                 "business_zip": zip_code,
@@ -449,8 +528,22 @@ def _render_business_admin():
                 "business_iban": iban,
                 "business_capacity": str(capacity),
                 "business_note": note,
-            })
-            st.success("Betriebsdaten gespeichert.")
+            }
+
+            # Einheiten unter allen relevanten Keys speichern (Kompatibilität)
+            for k in ["bars_count", "business_bars", "num_bars"]:
+                to_save[k] = str(bars_count)
+            for k in ["registers_count", "business_registers", "num_registers", "kassen_count"]:
+                to_save[k] = str(registers_count)
+            for k in ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"]:
+                to_save[k] = str(cloakrooms_count)
+
+            # Optional: Preise
+            to_save["conf_coat_price"] = str(conf_coat_price)
+            to_save["conf_bag_price"]  = str(conf_bag_price)
+
+            _set_meta_many(to_save)
+            st.success("Betriebs- & Einheiten-Daten gespeichert. Öffne danach 'Abrechnung' erneut.")
 
 # ---------------- Fixkosten ----------------
 def _render_fixcost_admin():
