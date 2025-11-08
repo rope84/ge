@@ -39,7 +39,7 @@ def import_modules():
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-    # wichtig: cashflow statt abrechnung laden
+    # Wichtig: cashflow statt abrechnung laden
     for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
         try_import(f"modules.{mod_name}")
 
@@ -155,7 +155,7 @@ def sidebar():
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
-    "abrechnung": "cashflow",  # Anzeige -> Modul cashflow
+    "abrechnung": "cashflow",
     "dashboard": "dashboard",
     "inventur": "inventur",
     "profil": "profile",
@@ -178,18 +178,23 @@ def route():
         return
 
     try:
+        # Dynamische Aufrufe nach Modul
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
 
         elif mod_key == "cashflow":
-            # Cashflow braucht den eingeloggten User (für Rechte & Unit-Zuweisungen)
             user = st.session_state.get("username") or "unknown"
             role = st.session_state.get("role") or "guest"
             scope = st.session_state.get("scope") or ""
+
+            # Versuche mit Parametern, sonst fallback
             try:
-                mod_func(user, role, scope)      # render_cashflow(user, role, scope)
+                mod_func(user, role, scope)
             except TypeError:
-                mod_func(user, role)             # Fallback für ältere Signatur
+                try:
+                    mod_func(user, role)
+                except TypeError:
+                    mod_func()
 
         elif mod_key == "dashboard":
             mod_func()
@@ -215,7 +220,7 @@ def route():
     except Exception:
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
-        
+
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
