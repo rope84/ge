@@ -27,10 +27,24 @@ def render_cashflow_home():
     # --- Schritt 1: Event wählen/neu anlegen ---
     col1, col2 = st.columns([1,2])
     day = col1.date_input("Event-Datum", value=st.session_state.get("cf_day") or datetime.date.today(), key="cf_day")
-    ev_opts = list_events_for_day(day)
-    choose_label = "— Event auswählen —" if not ev_opts else ev_opts[0][1] + f" ({ev_opts[0][2]})"
-    sel = col2.selectbox("Event auswählen", options=[("", choose_label)] + [(str(eid), f"{name} ({stt})") for eid, name, stt in ev_opts],
-                         index=0, key="cf_select_event", label_visibility="visible")
+
+    # Events als echte Tupel [(id, name, status)] anbieten, Anzeige via format_func
+    ev_opts = list_events_for_day(day)  # List[Tuple[id, name, status]]
+    opts = [None] + ev_opts
+
+    def _fmt(opt):
+        if opt is None:
+            return "— Event auswählen —"
+        return f"{opt[1]} ({opt[2]})"
+
+    sel = col2.selectbox(
+        "Event auswählen",
+        options=opts,
+        index=0,
+        format_func=_fmt,
+        key="cf_select_event",
+        label_visibility="visible"
+    )
 
     # Neuer Event (Wizard Schritt 2 – Einheiten)
     if mgr:
@@ -39,7 +53,7 @@ def render_cashflow_home():
             caps = meta_caps()
             st.caption(f"Maximal laut Betrieb: Bars={caps['bars']} | Kassen={caps['registers']} | Garderoben={caps['cloakrooms']}")
             c1,c2,c3 = st.columns(3)
-            bars = c1.number_input("Bars heute", min_value=0, max_value=caps["bars"], step=1, value=min( max(1, caps["bars"]), caps["bars"] ))
+            bars = c1.number_input("Bars heute", min_value=0, max_value=caps["bars"], step=1, value=min(max(1, caps["bars"]), caps["bars"]))
             regs = c2.number_input("Kassen heute", min_value=0, max_value=caps["registers"], step=1, value=min(1, caps["registers"]))
             clo  = c3.number_input("Garderoben heute", min_value=0, max_value=caps["cloakrooms"], step=1, value=min(1, caps["cloakrooms"]))
             if st.button("Event anlegen", type="primary", use_container_width=True, disabled=(not new_name)):
@@ -50,8 +64,10 @@ def render_cashflow_home():
                 st.rerun()
 
     # Auswahl übernehmen (existierendes Event)
-    if sel and sel != "":
-        st.session_state["cf_event_id"] = int(sel)
+    if sel is not None:
+        # sel ist None ODER ein Tupel (id, name, status)
+        if isinstance(sel, tuple):
+            st.session_state["cf_event_id"] = int(sel[0])
 
     eid = st.session_state.get("cf_event_id")
     if not eid:
@@ -95,9 +111,8 @@ def render_cashflow_home():
 
     ci = 0
     for utype, uno, is_done in units:
-        if not mgr:
-            if uno not in allowed.get(utype, []):
-                continue
+        if not mgr and (uno not in allowed.get(utype, [])):
+            continue
         subtitle = {
             "bar":   "Umsatz & Voucher erfassen",
             "cash":  "Bar/Unbar (Karten) erfassen",
