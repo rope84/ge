@@ -1,12 +1,26 @@
-# modules/cashflow/wizard.py
 import streamlit as st
 import datetime
 from core.db import conn
 
-# ---------- lokale DB-Helfer (unabhängig von models.py) ----------
+# ---------- lokale DB-Helfer ----------
 BAR_FIELDS   = ["cash", "pos1", "pos2", "pos3", "voucher", "tables"]
 CASH_FIELDS  = ["cash", "card"]
 CLOAK_FIELDS = ["coats_eur", "bags_eur"]
+
+def _ensure_unit_status_table():
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS cashflow_unit_status (
+                event_id   INTEGER NOT NULL,
+                unit_type  TEXT    NOT NULL,   -- bar|cash|cloak
+                unit_no    INTEGER NOT NULL,
+                done_by    TEXT,
+                done_at    TEXT,
+                PRIMARY KEY (event_id, unit_type, unit_no)
+            )
+        """)
+        cn.commit()
 
 def _get_event(event_id: int):
     with conn() as cn:
@@ -68,12 +82,37 @@ def _save_unit_values(event_id: int, unit_type: str, unit_no: int, data: dict[st
         )
         cn.commit()
 
+def _is_unit_done(event_id: int, unit_type: str, unit_no: int) -> bool:
+    _ensure_unit_status_table()
+    with conn() as cn:
+        c = cn.cursor()
+        r = c.execute(
+            "SELECT 1 FROM cashflow_unit_status WHERE event_id=? AND unit_type=? AND unit_no=?",
+            (event_id, unit_type, unit_no),
+        ).fetchone()
+        return r is not None
+
+def _set_unit_done(event_id: int, unit_type: str, unit_no: int, username: str):
+    _ensure_unit_status_table()
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO cashflow_unit_status(event_id, unit_type, unit_no, done_by, done_at)
+            VALUES(?,?,?,?,?)
+        """, (event_id, unit_type, unit_no, username, now))
+        c.execute(
+            "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+            (now, username, "unit_done", f"{event_id} {unit_type}#{unit_no}")
+        )
+        cn.commit()
+
 # ---------- UI ----------
 def render_cashflow_wizard():
     st.subheader("🧭 Erfassung")
 
     eid = st.session_state.get("cf_event_id")
-    sel = st.session_state.get("cf_unit")        # erwartet: (unit_type, unit_no)
+    sel = st.session_state.get("cf_unit")        # (unit_type, unit_no)
 
     if not eid:
         st.info("Kein Event ausgewählt.")
@@ -90,9 +129,11 @@ def render_cashflow_wizard():
 
     utype, uno = sel
     _, ev_day, ev_name, ev_status, *_ = ev
-    # Sperre für Nicht-Admins bei freigegebenem Event
+
     is_admin = (st.session_state.get("role","").lower() == "admin") or \
-               ("admin" in (st.session_state.get("functions","") or "").lower())
+               ("admin" in (st.session_state.get("functions","") or "").lower()) or \
+               ("betriebsleiter" in (st.session_state.get("functions","") or "").lower())
+
     locked = (ev_status == "approved") and (not is_admin)
 
     # Header + Back
@@ -105,10 +146,8 @@ def render_cashflow_wizard():
     with c2:
         st.markdown(f"**Event:** {ev_name} – {ev_day}  |  **Einheit:** {utype.upper()} #{uno}")
 
-    # Werte laden
     vals = _load_unit_values(eid, utype, uno)
 
-    # Editor
     if utype == "bar":
         c1, c2, c3, c4 = st.columns(4)
         cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0,
@@ -168,14 +207,18 @@ def render_cashflow_wizard():
         st.info(f"Garderobe gesamt: **{total:,.2f} €** (≈ Jacken {coats_qty} | Taschen {bags_qty})")
         payload = {"coats_eur": coats_eur, "bags_eur": bags_eur}
 
-    # Actions
     a, b = st.columns([1,1])
     if a.button("💾 Speichern", type="primary", use_container_width=True,
                 key=f"cf_save_{eid}_{utype}_{uno}", disabled=locked):
         _save_unit_values(eid, utype, uno, payload, st.session_state.get("username") or "unknown")
         st.success("Gespeichert.")
 
-    if b.button("⬅️ Zur Übersicht", use_container_width=True,
-                key=f"cf_back2_{eid}_{utype}_{uno}"):
-        st.session_state.pop("cf_unit", None)
-        st.rerun()
+    # Abschließen: speichert + markiert done + zurück zur Übersicht (für Nicht-Manager)
+    if b.button("✓ Abschließen", use_container_width=True,
+                key=f"cf_done_{eid}_{utype}_{uno}", disabled=locked):
+        _save_unit_values(eid, utype, uno, payload, st.session_state.get("username") or "unknown")
+        _set_unit_done(eid, utype, uno, st.session_state.get("username") or "unknown")
+        st.success("Abrechnung abgeschlossen.")
+        if not is_admin:
+            st.session_state.pop("cf_unit", None)
+            st.rerun()
