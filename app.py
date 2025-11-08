@@ -98,11 +98,14 @@ def fixed_footer():
             color: gray;
             opacity: 0.85;
             line-height: 1.4em;
+            z-index: 0;                 /* liegt hinter dem Content */
+            pointer-events: none;       /* blockiert keine Klicks/Eingaben */
         }}
         .footer a {{
             color: #bbb;
             text-decoration: none;
             font-weight: bold;
+            pointer-events: auto;       /* Links bleiben klickbar */
         }}
         .footer a:hover {{
             color: white;
@@ -111,7 +114,7 @@ def fixed_footer():
         </style>
 
         <div class="footer">
-            👤 {st.session_state.get('username', 'Gast')}</a><br>
+            👤 {st.session_state.get('username', 'Gast')}<br>
             Rechte: <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
