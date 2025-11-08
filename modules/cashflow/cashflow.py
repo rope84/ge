@@ -260,31 +260,47 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
                 st.rerun()
             ci = (ci + 1) % len(cols)
 
-    # Kassen
-    if counts["registers"]:
-        st.caption("Kassen")
-        cols = st.columns(min(4, max(1, counts["registers"])))
-        ci = 0
-        for i in range(1, counts["registers"]+1):
-            if not _visible("cash", i):
-                continue
+# Bars
+if counts["bars"]:
+    st.caption("Bars")
+    cols = st.columns(min(4, max(1, counts["bars"])))
+    ci = 0
+    for i in range(1, counts["bars"]+1):
+        if not _visible("bar", i):
+            continue
+        with cols[ci]:
+            if _tile(f"Bar {i}", "Umsatz & Voucher erfassen", key=f"open_bar_{event_id}_{i}"):
+                st.session_state["cf_unit"] = ("bar", i)
+                st.rerun()
+        ci = (ci + 1) % len(cols)
+
+# Kassen
+if counts["registers"]:
+    st.caption("Kassen")
+    cols = st.columns(min(4, max(1, counts["registers"])))
+    ci = 0
+    for i in range(1, counts["registers"]+1):
+        if not _visible("cash", i):
+            continue
+        with cols[ci]:
             if _tile(f"Kassa {i}", "Bar/Unbar (Karten) erfassen", key=f"open_cash_{event_id}_{i}"):
                 st.session_state["cf_unit"] = ("cash", i)
                 st.rerun()
-            ci = (ci + 1) % len(cols)
+        ci = (ci + 1) % len(cols)
 
-    # Garderoben
-    if counts["cloakrooms"]:
-        st.caption("Garderoben")
-        cols = st.columns(min(4, max(1, counts["cloakrooms"])))
-        ci = 0
-        for i in range(1, counts["cloakrooms"]+1):
-            if not _visible("cloak", i):
-                continue
+# Garderoben
+if counts["cloakrooms"]:
+    st.caption("Garderoben")
+    cols = st.columns(min(4, max(1, counts["cloakrooms"])))
+    ci = 0
+    for i in range(1, counts["cloakrooms"]+1):
+        if not _visible("cloak", i):
+            continue
+        with cols[ci]:
             if _tile(f"Garderobe {i}", "Jacken/Taschen erfassen", key=f"open_cloak_{event_id}_{i}"):
                 st.session_state["cf_unit"] = ("cloak", i)
                 st.rerun()
-            ci = (ci + 1) % len(cols)
+        ci = (ci + 1) % len(cols)
 
 def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, locked: bool = False):
     st.markdown(f"#### {unit_type.upper()} #{unit_no}")
