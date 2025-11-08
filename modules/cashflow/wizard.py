@@ -51,13 +51,12 @@ def _user_may_edit(unit: dict) -> bool:
         return bool(r)
 
 def render_cashflow_wizard():
-    ev = get_current_event()
-    if not ev:
-        st.info("Kein Event angelegt. Bitte Betriebsleiter startet den Tag.")
-        return
-    if ev["status"] not in ("IN_PROGRESS","OPEN","DRAFT"):
-        st.info(f"Event-Status: {ev['status']} – Änderungen nicht möglich.")
-        return
+ev_id = st.session_state.get("cf_event_id")
+if not ev_id:
+    # dieselben 5–10 Zeilen wie in home.py unter dem Expander,
+    # oder einfach:
+    st.info("Kein Event angelegt. Bitte im Tab **Übersicht** oben den Tag starten.")
+    return
 
     unit_id = st.session_state.get("cashflow_unit_id")
     if not unit_id:
