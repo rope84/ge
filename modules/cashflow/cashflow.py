@@ -36,16 +36,10 @@ def _get_user(func_username: str) -> Optional[tuple]:
         return row
 
 def _user_rights(username: str, session_role: str = "") -> Dict:
-    """
-    is_admin_manager True wenn:
-      - users.functions enthält 'admin' ODER 'betriebsleiter'
-      - ODER session_role == 'admin' (Fallback, wenn DB-Spalte leer ist)
-    """
     row = _get_user(username)
     if not row:
         return {"is_admin_manager": session_role.lower() == "admin",
                 "units": {"bar": [], "cash": [], "cloak": []}}
-
     _, _, functions, units = row
     funcs = [f.strip().lower() for f in (functions or "").split(",") if f.strip()]
     is_admin_manager = ("admin" in funcs) or ("betriebsleiter" in funcs) or (session_role.lower() == "admin")
@@ -176,7 +170,10 @@ def _get_or_create_event(day: datetime.date, name: str, username: str) -> int:
 def _get_event(event_id: int) -> Optional[tuple]:
     with conn() as cn:
         c = cn.cursor()
-        return c.execute("SELECT id, event_date, name, status, created_by, created_at, approved_by, approved_at FROM events WHERE id=?", (event_id,)).fetchone()
+        return c.execute(
+            "SELECT id, event_date, name, status, created_by, created_at, approved_by, approved_at "
+            "FROM events WHERE id=?", (event_id,)
+        ).fetchone()
 
 def _set_event_status(event_id: int, status: str, username: str):
     with conn() as cn:
@@ -231,6 +228,13 @@ def _save_unit_values(event_id: int, unit_type: str, unit_no: int, data: Dict[st
 # UI Bits
 # -----------------------------
 
+def _tile(title: str, subtitle: str, key: str) -> bool:
+    with st.container(border=True):
+        st.markdown(f"**{title}**  \n"
+                    f"<span style='opacity:.7;font-size:12px'>{subtitle}</span>",
+                    unsafe_allow_html=True)
+        return st.button("Öffnen", key=key, use_container_width=True)
+
 def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str, int]):
     st.subheader("Einheiten")
     if counts["bars"] + counts["registers"] + counts["cloakrooms"] == 0:
@@ -238,12 +242,10 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         return
 
     is_mgr = rights["is_admin_manager"]
-    allowed = rights["units"]  # für Nicht-Manager
+    allowed = rights["units"]
 
     def _visible(unit_type: str, i: int) -> bool:
-        if is_mgr:
-            return True
-        return i in allowed.get(unit_type, [])
+        return True if is_mgr else (i in allowed.get(unit_type, []))
 
     # Bars
     if counts["bars"]:
@@ -253,12 +255,9 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["bars"]+1):
             if not _visible("bar", i):
                 continue
-            with cols[ci]:
-                with st.container(border=True):
-                    st.markdown(f"**Bar {i}**  \n<span style='opacity:.7;font-size:12px'>Umsatz & Voucher erfassen</span>", unsafe_allow_html=True)
-                    if st.button("Öffnen", key=f"open_bar_{i}", use_container_width=True):
-                        st.session_state["cf_unit"] = ("bar", i)
-                        st.rerun()
+            if _tile(f"Bar {i}", "Umsatz & Voucher erfassen", key=f"open_bar_{event_id}_{i}"):
+                st.session_state["cf_unit"] = ("bar", i)
+                st.rerun()
             ci = (ci + 1) % len(cols)
 
     # Kassen
@@ -269,12 +268,9 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["registers"]+1):
             if not _visible("cash", i):
                 continue
-            with cols[ci]:
-                with st.container(border=True):
-                    st.markdown(f"**Kassa {i}**  \n<span style='opacity:.7;font-size:12px'>Bar/Unbar (Karten) erfassen</span>", unsafe_allow_html=True)
-                    if st.button("Öffnen", key=f"open_cash_{i}", use_container_width=True):
-                        st.session_state["cf_unit"] = ("cash", i)
-                        st.rerun()
+            if _tile(f"Kassa {i}", "Bar/Unbar (Karten) erfassen", key=f"open_cash_{event_id}_{i}"):
+                st.session_state["cf_unit"] = ("cash", i)
+                st.rerun()
             ci = (ci + 1) % len(cols)
 
     # Garderoben
@@ -285,12 +281,9 @@ def _unit_overview(event_id: int, username: str, rights: Dict, counts: Dict[str,
         for i in range(1, counts["cloakrooms"]+1):
             if not _visible("cloak", i):
                 continue
-            with cols[ci]:
-                with st.container(border=True):
-                    st.markdown(f"**Garderobe {i}**  \n<span style='opacity:.7;font-size:12px'>Jacken/Taschen erfassen</span>", unsafe_allow_html=True)
-                    if st.button("Öffnen", key=f"open_cloak_{i}", use_container_width=True):
-                        st.session_state["cf_unit"] = ("cloak", i)
-                        st.rerun()
+            if _tile(f"Garderobe {i}", "Jacken/Taschen erfassen", key=f"open_cloak_{event_id}_{i}"):
+                st.session_state["cf_unit"] = ("cloak", i)
+                st.rerun()
             ci = (ci + 1) % len(cols)
 
 def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, locked: bool = False):
@@ -299,29 +292,29 @@ def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, loc
 
     if unit_type == "bar":
         c1,c2,c3,c4 = st.columns(4)
-        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked, key=f"v_cash_{unit_type}_{unit_no}")
-        pos1 = c2.number_input("Bankomat 1 (€)", min_value=0.0, step=50.0, value=float(vals["pos1"]), disabled=locked, key=f"v_pos1_{unit_type}_{unit_no}")
-        pos2 = c3.number_input("Bankomat 2 (€)", min_value=0.0, step=50.0, value=float(vals["pos2"]), disabled=locked, key=f"v_pos2_{unit_type}_{unit_no}")
-        pos3 = c4.number_input("Bankomat 3 (€)", min_value=0.0, step=50.0, value=float(vals["pos3"]), disabled=locked, key=f"v_pos3_{unit_type}_{unit_no}")
+        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked, key=f"v_cash_{unit_type}_{event_id}_{unit_no}")
+        pos1 = c2.number_input("Bankomat 1 (€)", min_value=0.0, step=50.0, value=float(vals["pos1"]), disabled=locked, key=f"v_pos1_{unit_type}_{event_id}_{unit_no}")
+        pos2 = c3.number_input("Bankomat 2 (€)", min_value=0.0, step=50.0, value=float(vals["pos2"]), disabled=locked, key=f"v_pos2_{unit_type}_{event_id}_{unit_no}")
+        pos3 = c4.number_input("Bankomat 3 (€)", min_value=0.0, step=50.0, value=float(vals["pos3"]), disabled=locked, key=f"v_pos3_{unit_type}_{event_id}_{unit_no}")
         v1, v2 = st.columns([2,1])
-        voucher = v1.number_input("Voucher (€)", min_value=0.0, step=10.0, value=float(vals["voucher"]), disabled=locked, key=f"v_voucher_{unit_type}_{unit_no}")
-        tables = v2.number_input("Tische (Stk)", min_value=0, step=1, value=int(vals["tables"]), disabled=locked, key=f"v_tables_{unit_type}_{unit_no}")
+        voucher = v1.number_input("Voucher (€)", min_value=0.0, step=10.0, value=float(vals["voucher"]), disabled=locked, key=f"v_voucher_{unit_type}_{event_id}_{unit_no}")
+        tables = v2.number_input("Tische (Stk)", min_value=0, step=1, value=int(vals["tables"]), disabled=locked, key=f"v_tables_{unit_type}_{event_id}_{unit_no}")
         total = float(cash)+float(pos1)+float(pos2)+float(pos3)+float(voucher)
         st.info(f"Umsatz gesamt: **{total:,.2f} €**", icon="💶")
         payload = {"cash": cash, "pos1": pos1, "pos2": pos2, "pos3": pos3, "voucher": voucher, "tables": tables}
 
     elif unit_type == "cash":
         c1,c2 = st.columns(2)
-        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked, key=f"v_cash_{unit_type}_{unit_no}")
-        card = c2.number_input("Unbar / Karte (€)", min_value=0.0, step=50.0, value=float(vals["card"]), disabled=locked, key=f"v_card_{unit_type}_{unit_no}")
+        cash = c1.number_input("Barumsatz (€)", min_value=0.0, step=50.0, value=float(vals["cash"]), disabled=locked, key=f"v_cash_{unit_type}_{event_id}_{unit_no}")
+        card = c2.number_input("Unbar / Karte (€)", min_value=0.0, step=50.0, value=float(vals["card"]), disabled=locked, key=f"v_card_{unit_type}_{event_id}_{unit_no}")
         st.info(f"Kassa gesamt: **{(cash+card):,.2f} €**", icon="🧾")
         payload = {"cash": cash, "card": card}
 
     else:  # cloak
         coat_p, bag_p = _get_prices()
         c1,c2 = st.columns(2)
-        coats_eur = c1.number_input(f"Jacken/Kleidung (€) – Stückpreis {coat_p:.2f} €", min_value=0.0, step=10.0, value=float(vals["coats_eur"]), disabled=locked, key=f"v_coats_{unit_type}_{unit_no}")
-        bags_eur  = c2.number_input(f"Taschen/Rucksäcke (€) – Stückpreis {bag_p:.2f} €", min_value=0.0, step=10.0, value=float(vals["bags_eur"]), disabled=locked, key=f"v_bags_{unit_type}_{unit_no}")
+        coats_eur = c1.number_input(f"Jacken/Kleidung (€) – Stückpreis {coat_p:.2f} €", min_value=0.0, step=10.0, value=float(vals["coats_eur"]), disabled=locked, key=f"v_coats_{unit_type}_{event_id}_{unit_no}")
+        bags_eur  = c2.number_input(f"Taschen/Rucksäcke (€) – Stückpreis {bag_p:.2f} €", min_value=0.0, step=10.0, value=float(vals["bags_eur"]), disabled=locked, key=f"v_bags_{unit_type}_{event_id}_{unit_no}")
         total = coats_eur + bags_eur
         try:
             coats_qty = int(coats_eur // coat_p) if coat_p > 0 else 0
@@ -332,11 +325,11 @@ def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, loc
         payload = {"coats_eur": coats_eur, "bags_eur": bags_eur}
 
     colA, colB = st.columns([1,1])
-    if colA.button("⬅️ Zurück zur Übersicht", use_container_width=True):
+    if colA.button("⬅️ Zur Übersicht", key=f"back_{event_id}_{unit_type}_{unit_no}", use_container_width=True):
         st.session_state.pop("cf_unit", None)
         st.rerun()
 
-    if not locked and colB.button("💾 Speichern", type="primary", use_container_width=True):
+    if (not locked) and colB.button("💾 Speichern", key=f"save_{event_id}_{unit_type}_{unit_no}", type="primary", use_container_width=True):
         _save_unit_values(event_id, unit_type, unit_no, payload, username)
         st.success("Gespeichert.")
 
@@ -345,13 +338,12 @@ def _unit_editor(event_id: int, unit_type: str, unit_no: int, username: str, loc
 # -----------------------------
 
 def render_cashflow(current_user: str = "", current_role: str = "", scope: str = ""):
-    """
-    Entry-Point. Parameter sind optional, damit app.py fallbacken kann.
-    """
     _ensure_tables()
 
     st.title("💰 Abrechnung (Cashflow)")
-    st.caption("Event auswählen/eröffnen → Einheiten erfassen → Tagesfreigabe")
+    # Debug-Banner – hilft sofort zu erkennen, dass das NEUE Modul aktiv ist
+    st.caption(f"🔎 Cashflow aktiv – User: {current_user or 'unknown'} | Role: {current_role or 'guest'} "
+               f"| ev_id: {st.session_state.get('cf_event_id')} | sel: {st.session_state.get('cf_unit')}")
 
     # Event Header
     day_default = st.session_state.get("cf_day") or datetime.date.today()
@@ -390,7 +382,6 @@ def render_cashflow(current_user: str = "", current_role: str = "", scope: str =
         st.warning("Keine Einheiten (Bars/Kassen/Garderobe) konfiguriert – bitte im Admin-Bereich unter „Betrieb“ Anzahl hinterlegen.")
         return
 
-    # Unit Editor vs. Übersicht
     unit_sel = st.session_state.get("cf_unit")
     locked = (ev_status == "approved") and (not is_mgr)
 
@@ -400,12 +391,11 @@ def render_cashflow(current_user: str = "", current_role: str = "", scope: str =
     else:
         _unit_overview(ev_id, current_user or "unknown", rights, counts)
 
-    # Manager Controls
     st.markdown("---")
     if is_mgr:
         c1, c2, c3 = st.columns([1,1,2])
         if ev_status != "approved":
-            if c1.button("✅ Tag freigeben (abschließen)", use_container_width=True):
+            if c1.button("✅ Tag freigeben (abschließen)", key=f"approve_{ev_id}", use_container_width=True):
                 _set_event_status(ev_id, "approved", current_user or "unknown")
                 st.success("Tag freigegeben. Einträge sind für Nicht-Manager gesperrt.")
                 st.rerun()
