@@ -49,7 +49,8 @@ def render_login_form(app_name: str, app_version: str):
         st.markdown("<div class='ge-sub'>Bitte melde dich an, um fortzufahren.</div>", unsafe_allow_html=True)
     with c2:
         st.markdown(f"<div style='text-align:right' class='ge-badge'>v{app_version}</div>", unsafe_allow_html=True)
-/* Entfernt ungewollte leere Streamlit-Container ("Pille") */
+
+# Entfernt ungewollte leere Streamlit-Container ("Pille")
 button[kind="secondary"] div[data-testid="stMarkdownContainer"],
 div[data-testid="stFormSubmitButton"] > div:empty,
 button[title=""] {
