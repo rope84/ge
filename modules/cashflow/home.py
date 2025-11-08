@@ -22,7 +22,7 @@ def _ensure_schema():
                 approved_at TEXT
             )
         """)
-        -- 1 Event-Name pro Tag ist zulässig, aber mehrere Events pro Tag mit unterschiedlichen Namen sind erlaubt
+        # 1 Event-Name pro Tag ist zulässig, aber mehrere Events pro Tag mit unterschiedlichen Namen sind erlaubt
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_day_name ON events(event_date, name)")
         cn.commit()
 
