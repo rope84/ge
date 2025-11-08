@@ -12,6 +12,25 @@ META_KEYS = {
 
 # ---------------- DB/Schema ----------------
 
+def _ensure_schema():
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open', -- open | approved | closed
+                created_by TEXT,
+                created_at TEXT,
+                approved_by TEXT,
+                approved_at TEXT
+            )
+        """)
+        # Mehrere Events pro Tag erlaubt, aber (Tag, Name) ist eindeutig
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_day_name ON events(event_date, name)")
+        cn.commit()
+
 def _get_meta(key: str) -> Optional[str]:
     with conn() as cn:
         c = cn.cursor()
@@ -34,25 +53,6 @@ def _counts() -> Dict[str, int]:
         "cloakrooms": _first_int(META_KEYS["cloakrooms"], 0),
     }
 
-def _ensure_schema():
-    with conn() as cn:
-        c = cn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_date TEXT NOT NULL,
-                name TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'open', -- open | approved | closed
-                created_by TEXT,
-                created_at TEXT,
-                approved_by TEXT,
-                approved_at TEXT
-            )
-        """)
-        # 1 Name pro Datum ist in Kombination einzigartig; mehrere Events am gleichen Tag mit unterschiedlichem Namen sind erlaubt
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_day_name ON events(event_date, name)")
-        cn.commit()
-
 def _get_or_create_event(day: datetime.date, name: str, user: str) -> int:
     _ensure_schema()
     with conn() as cn:
@@ -71,6 +71,24 @@ def _get_or_create_event(day: datetime.date, name: str, user: str) -> int:
         cn.commit()
         return c.lastrowid
 
+def _list_events_for_day(day: datetime.date):
+    _ensure_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        rows = c.execute(
+            "SELECT id, name, status FROM events WHERE event_date=? ORDER BY created_at DESC, id DESC",
+            (day.isoformat(),),
+        ).fetchall()
+    return rows  # [(id, name, status), ...]
+
+def _load_event(event_id: int):
+    with conn() as cn:
+        c = cn.cursor()
+        return c.execute(
+            "SELECT id, event_date, name, status FROM events WHERE id=?",
+            (event_id,),
+        ).fetchone()
+
 # ---------------- UI ----------------
 
 def _tile(label: str, subtitle: str, key: str) -> bool:
@@ -85,8 +103,7 @@ def _tile(label: str, subtitle: str, key: str) -> bool:
 def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool):
     st.subheader("🏁 Übersicht")
 
-    # Event wählen / anlegen
-    # WICHTIG: nicht in st.session_state['cf_day']/['cf_name'] schreiben (Widget-Key-Konflikt).
+    # Event-Header
     default_day = st.session_state.get("cf_event_day") or datetime.date.today()
     default_name = st.session_state.get("cf_event_name") or ""
 
@@ -94,11 +111,11 @@ def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool)
     day = col1.date_input("Event-Datum", value=default_day, key="cf_day")
     name = col2.text_input("Eventname", value=default_name, key="cf_name", placeholder="z. B. OZ / Halloween")
 
+    # Manager: Event öffnen/neu anlegen
     if is_mgr:
-        # Button für „öffnen/fortsetzen“ – erlaubt auch mehrere Events am selben Tag (mit anderem Namen)
-        if st.button("▶️ Event öffnen/fortsetzen", type="primary", use_container_width=True, disabled=(not name or not day)):
+        open_col, _ = st.columns([1, 3])
+        if open_col.button("▶️ Event öffnen/fortsetzen", type="primary", use_container_width=True, disabled=(not name or not day)):
             ev_id = _get_or_create_event(day, name, st.session_state.get("username") or "unknown")
-            # Nur in separate Keys schreiben, nicht die Widget-Keys
             st.session_state["cf_event_id"]   = ev_id
             st.session_state["cf_event_day"]  = day
             st.session_state["cf_event_name"] = name
@@ -107,30 +124,54 @@ def render_cashflow_home(is_mgr: bool, is_bar: bool, is_kas: bool, is_clo: bool)
     else:
         st.caption("Event wird vom Betriebsleiter gestartet. Danach kannst du deine Einheit bearbeiten.")
 
-    # Aktives Event anzeigen
+    # Manager: Event-Auswahl (alle Events für gewählten Tag)
+    if is_mgr:
+        events_today = _list_events_for_day(day)
+        if events_today:
+            ev_labels = [f"{nm}  •  ({stt})" for (_id, nm, stt) in events_today]
+            current_ev = st.session_state.get("cf_event_id")
+            # Preselect aktuell aktives Event, falls es zum Datum gehört
+            try:
+                pre_idx = next(
+                    (i for i, (eid, _, _) in enumerate(events_today) if eid == current_ev),
+                    0
+                )
+            except Exception:
+                pre_idx = 0
+            sel_idx = st.selectbox("Event an diesem Tag auswählen", range(len(events_today)),
+                                   format_func=lambda i: ev_labels[i], index=pre_idx)
+            sel_id = events_today[sel_idx][0]
+            col_a, col_b = st.columns([1, 1])
+            if col_a.button("Aktivieren", use_container_width=True, key="btn_pick_event"):
+                st.session_state["cf_event_id"]   = sel_id
+                st.session_state["cf_event_day"]  = day
+                st.session_state["cf_event_name"] = events_today[sel_idx][1]
+                st.rerun()
+        else:
+            st.info("Für dieses Datum gibt es noch keine Events. Du kannst oben durch „Event öffnen/fortsetzen“ ein neues anlegen.")
+
+    # Aktives Event
     ev_id = st.session_state.get("cf_event_id")
     if not ev_id:
         st.info("Kein Event/Tag vorhanden.")
         return
 
-    with conn() as cn:
-        c = cn.cursor()
-        evt = c.execute("SELECT id, event_date, name, status FROM events WHERE id=?", (ev_id,)).fetchone()
+    evt = _load_event(ev_id)
     if not evt:
-        st.warning("Event nicht gefunden – bitte erneut öffnen.")
+        st.warning("Event nicht gefunden – bitte erneut öffnen/aktivieren.")
         st.session_state.pop("cf_event_id", None)
         return
 
     _, ev_day, ev_name, ev_status = evt
     st.success(f"Aktives Event: **{ev_name}** am **{ev_day}** (Status: {ev_status})")
 
-    # Kacheln je Einheit
+    # Einheiten-Kacheln
     cnt = _counts()
     if cnt["bars"] + cnt["registers"] + cnt["cloakrooms"] == 0:
         st.warning("Keine Einheiten konfiguriert – bitte unter Admin → Betrieb definieren.")
         return
 
-    # Sichtbarkeitslogik (einfach): Leiter sehen ihren Typ, Mgr alles
+    # Sichtbarkeiten: einfache Typen-Logik; (fein granular via Zuweisung machst du ggf. in utils)
     # Bars
     if is_mgr or is_bar:
         st.caption("Bars")
