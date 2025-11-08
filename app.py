@@ -68,11 +68,22 @@ def logout():
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
     if pressed:
-        ok = getattr(auth, "_do_login")(u, p)
+        # Harte Eingabe-Guards
+        if not u or not p:
+            st.error("Bitte Benutzername und Passwort eingeben.")
+            return
+
+        try:
+            ok = getattr(auth, "_do_login")(u, p)  # nutzt core.auth (oder root auth, je nach Import)
+        except Exception as e:
+            st.error("Login-Fehler. Siehe Logs/Konsole.")
+            return
+
         if ok:
-            st.session_state.auth = True
-            st.session_state.username = u
-            st.session_state.role = "admin" if u == "username" else (st.session_state.get("role") or "user")
+            # WICHTIG: Rolle & restliche Session werden in auth._do_login gesetzt.
+            # NICHT hier überschreiben. Nur Fallback setzen, falls ausnahmsweise leer.
+            if not st.session_state.get("role"):
+                st.session_state["role"] = "user"
             st.rerun()
         else:
             st.error("❌ Falscher Benutzername oder Passwort")
