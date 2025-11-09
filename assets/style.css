@@ -1,143 +1,156 @@
 /* ===== Gastro Essentials – Theme CSS ===== */
 
+/* ---------- Design Tokens ---------- */
 :root {
-    --primary: #0A84FF;
-    --accent:  #e5e7eb;
-    --text:    #e5e7eb;
-    --muted:   #9ca3af;
-    --card:    #111827;
-    --body:    #0b0f18;
-    --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+  --primary: #0A84FF;
+  --accent:  #e5e7eb;
+  --text:    #e5e7eb;
+  --muted:   #9ca3af;
+  --card:    #111827;
+  --body:    #0b0f18;
+  --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
 }
 
-/* ===== Base ===== */
+/* ---------- Global Base ---------- */
 html, body, [class^="css"] {
-    font-family: var(--font-stack);
-    background: var(--body);
-    color: var(--text);
+  font-family: var(--font-stack);
+  background: var(--body);
+  color: var(--text);
 }
 
-/* ===== Page Header ===== */
+/* Oben etwas Luft (und um die „Pille“-Lücke zu kompensieren, falls sie ausgeblendet ist) */
+.block-container { padding-top: 16px !important; }
+
+/* ---------- Page Header ---------- */
 .ge-page-header {
-    margin: 0 0 1.0rem 0;
-    padding: .25rem 0 .5rem 0;
-    border-bottom: 1px solid rgba(255,255,255,.08);
+  margin: 0 0 1.0rem 0;
+  padding: .25rem 0 .5rem 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
 }
 .ge-page-header h1 {
-    color: var(--accent);
-    font-size: 1.6rem;
-    line-height: 1.2;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    font-weight: 700;
+  color: var(--accent);
+  font-size: 1.6rem;
+  line-height: 1.2;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-weight: 700;
 }
 .ge-page-header p {
-    color: var(--muted);
-    margin-top: .35rem;
-    font-size: .95rem;
+  color: var(--muted);
+  margin-top: .35rem;
+  font-size: .95rem;
 }
 
-/* ===== Section Title ===== */
+/* ---------- Section Title ---------- */
 .ge-section-title {
-    color: var(--accent);
-    margin: 1.1rem 0 .6rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: .5rem;
+  color: var(--accent);
+  margin: 1.1rem 0 .6rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
 }
 
-/* ===== Cards ===== */
+/* ---------- Cards ---------- */
 .ge-card {
-    background: var(--card);
-    border: 1px solid rgba(255,255,255,.06);
-    border-radius: 14px;
-    padding: 16px 18px;
-    margin: 8px 0 12px;
-    box-shadow: 0 6px 18px rgba(0,0,0,.16);
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin: 8px 0 12px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.16);
 }
 .ge-card-title { font-size: .82rem; color: var(--muted); }
 .ge-card-value { font-size: 1.6rem; font-weight: 800; margin-top: 4px; }
 .ge-card-help  { font-size: .8rem; color: var(--muted); margin-top: 6px; }
 
-/* ===== Sidebar Footer ===== */
+/* ---------- Sidebar Footer ---------- */
 .ge-side-footer {
-    position: fixed;
-    left: 14px;
-    bottom: 10px;
-    font-size: 10px;
-    opacity: .65;
+  position: fixed;
+  left: 14px;
+  bottom: 10px;
+  font-size: 10px;
+  opacity: .65;
 }
 
-/* ===== Login Card ===== */
+/* ---------- Login ---------- */
 .ge-login-wrap {
-    min-height: 86vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem 0;
-    background: transparent;
+  min-height: 86vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 0;
+  background: transparent;
 }
 .ge-login-card {
-    width: min(520px, 96%);
-    background: var(--card);
-    border: 1px solid rgba(255,255,255,.12);
-    border-radius: 16px;
-    padding: 22px 20px;
-    box-shadow: 0 14px 40px rgba(0,0,0,.25);
-    backdrop-filter: blur(10px) saturate(150%);
-    -webkit-backdrop-filter: blur(10px) saturate(150%);
+  width: min(520px, 96%);
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  padding: 22px 20px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.25);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
 }
-.ge-login-logo {
-    font-size: 38px;
-    text-align: center;
-}
+.ge-login-logo { font-size: 38px; text-align: center; }
 .ge-login-title {
-    text-align: center;
-    font-weight: 700;
-    font-size: 22px;
-    color: var(--accent);
+  text-align: center;
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--accent);
 }
 .ge-login-sub {
-    text-align: center;
-    color: var(--muted);
-    font-size: 12px;
-    margin-bottom: .75rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: .75rem;
 }
 .ge-login-help {
-    text-align: center;
-    color: var(--muted);
-    font-size: 12px;
-    margin-top: .6rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: .6rem;
 }
-.ge-login-help span {
-    color: var(--accent);
-    opacity: .9;
-}
+.ge-login-help span { color: var(--accent); opacity: .9; }
 
-/* ===== Input Fields ===== */
+/* ---------- Inputs ---------- */
 input[type="text"], input[type="password"] {
-    border-radius: 12px !important;
-    border: 1px solid rgba(255,255,255,.25) !important;
-    padding: 10px 12px !important;
-    background: rgba(255,255,255,0.02) !important;
-    color: var(--text) !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255,255,255,.25) !important;
+  padding: 10px 12px !important;
+  background: rgba(255,255,255,0.02) !important;
+  color: var(--text) !important;
 }
 input[type="text"]:focus, input[type="password"]:focus {
-    border-color: var(--primary) !important;
-    box-shadow: 0 0 0 4px rgba(10,132,255,.25) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px rgba(10,132,255,.25) !important;
 }
 
-/* ===== Buttons ===== */
+/* ---------- Buttons ---------- */
 button[kind="primary"] {
-    border-radius: 12px !important;
-    background: var(--primary) !important;
-    color: #fff !important;
-    font-weight: 600 !important;
+  border-radius: 12px !important;
+  background: var(--primary) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
 }
 button[kind="primary"]:hover {
-    filter: brightness(1.06);
-    transform: translateY(-1px);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
 }
+
+/* ---------- Badge-/„Pillen“-Killer (global) ---------- */
+/* Variiert je Streamlit-Version: wir eliminieren alle üblichen Kandidaten */
+[data-testid="stStatusWidget"],
+[data-testid="stDecoration"],
+.stDeployButton,
+.viewerBadge_container__r3R7,
+.viewerBadge_link__qRIco,
+button[title="Manage app"],
+button[title="View source"] {
+  display: none !important;
+}
+
+/* Manche Builds platzieren ein „Header-Deko“-Element oben */
+header [data-testid="stToolbar"] { display: none !important; }
