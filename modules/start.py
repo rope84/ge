@@ -3,6 +3,7 @@ import streamlit as st
 import datetime
 from typing import Dict, List, Optional, Tuple
 import random
+from core.db import conn
 from core.ui_theme import page_header
 from core.config import APP_NAME, APP_VERSION
 
