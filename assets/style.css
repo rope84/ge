@@ -168,3 +168,17 @@ button[aria-label="App status"] {
 .main .block-container {
   padding-top: 16px !important;
 }
+
+/* Start-Hero Box ausblenden/neutralisieren */
+.start-hero {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+.start-badge {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
