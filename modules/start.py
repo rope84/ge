@@ -68,7 +68,6 @@ def _count_open_tasks_for_user(username: str, functions: str, units_str: str) ->
         return 0
 
     # User hat mindestens eine Unit -> jedes offene Event ist für ihn relevant
-    # (Wenn du es noch enger möchtest, könntest du hier prüfen, ob es Einträge für genau diese Units gibt.)
     return len(open_events)
 
 # ------------------------------------------------
@@ -77,31 +76,23 @@ def _count_open_tasks_for_user(username: str, functions: str, units_str: str) ->
 
 def _hero_card(title: str, subtitle: str, badge: str = ""):
     st.markdown(
-        f"""
+        """
         <style>
-        .start-hero {{
+        .start-hero {
             background: linear-gradient(180deg, rgba(34,34,48,0.9) 0%, rgba(18,18,28,0.9) 100%);
             border: 1px solid rgba(255,255,255,0.06);
             border-radius: 18px;
             padding: 20px 20px;
             box-shadow: 0 16px 38px rgba(0,0,0,0.35);
-        }}
-        .start-title {{
-            font-size: 1.2rem; font-weight: 700; margin: 0;
-        }}
-        .start-sub {{
-            opacity: .75; margin-top: 4px; font-size: .92rem;
-        }}
-        .start-badge {{
+        }
+        .start-title { font-size: 1.2rem; font-weight: 700; margin: 0; }
+        .start-sub   { opacity: .75; margin-top: 4px; font-size: .92rem; }
+        .start-badge {
             display:inline-block; padding: 4px 10px; border-radius:999px;
             border:1px solid #FFFFFF22; font-size:.8rem; opacity:.85;
-        }}
-        .kpi {{
-            font-size: 2rem; font-weight: 800; margin: 12px 0 2px 0;
-        }}
-        .kpi-sub {{
-            opacity:.7; font-size:.85rem; margin-bottom: 12px;
-        }}
+        }
+        .kpi     { font-size: 2rem; font-weight: 800; margin: 12px 0 2px 0; }
+        .kpi-sub { opacity:.7; font-size:.85rem; margin-bottom: 12px; }
         </style>
         """,
         unsafe_allow_html=True
@@ -115,6 +106,8 @@ def _hero_card(title: str, subtitle: str, badge: str = ""):
         with colB:
             if badge:
                 st.markdown(f"<div style='text-align:right'><span class='start-badge'>{badge}</span></div>", unsafe_allow_html=True)
+        # WICHTIG: Box sauber schließen, sonst entstehen „Geister-Blöcke“
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def _kpi_block(value: int, label: str):
     st.markdown(f"<div class='kpi'>{value}</div>", unsafe_allow_html=True)
@@ -130,7 +123,6 @@ def _cta_buttons(is_mgr: bool):
         if is_mgr:
             if st.button("🗂️ Event anlegen / bearbeiten", use_container_width=True):
                 st.session_state["nav_choice"] = "Abrechnung"
-                # Optional: Sprunganker für die Event-Verwaltung kannst du später via session flag bauen
                 st.rerun()
 
 def _activities():
@@ -181,6 +173,27 @@ def _gastro_news():
 # ------------------------------------------------
 
 def render_start(username: str = "Gast"):
+    # --- Pill/Badge/Decoration-Killer (global, sehr aggressiv) ---
+    st.markdown(
+        """
+        <style>
+        /* Kill Streamlit-Decorations / Badges / Toolbar-Pillen */
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stCloudAppStatus"],
+        .stDeployButton,
+        .viewerBadge_container__r3R7,
+        .viewerBadge_link__qRIco,
+        header [data-testid="stToolbar"],
+        header [data-testid="stHeaderActionButtons"],
+        header [data-testid="stActionButton"],
+        button[title="Manage app"],
+        button[title="View source"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     # Kopfbereich / Hero
     user_row = _fetch_user(username)
     functions = (user_row[2] if user_row else "") or ""
