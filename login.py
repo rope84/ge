@@ -15,11 +15,7 @@ def render_login_form(app_name: str, app_version: str):
         [data-testid="stSidebar"] { display: none !important; }
 
         /* Haupt-Container schmal & zentriert, auch bei layout="wide" */
-        .block-container {
-            max-width: 460px !important;
-            padding-top: 10vh !important;
-            margin: 0 auto !important;
-        }
+
 
         /* dezenter Verlaufshintergrund */
         body {
