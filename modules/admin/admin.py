@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Tuple
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.config import APP_NAME, APP_VERSION
+from core import auth  # ⚠️ neu: für Pending-Registrierungen
 
 # Benutzer-UI (liegt in modules/admin/users_admin.py)
 from .users_admin import render_users_admin
@@ -47,21 +48,24 @@ def _ensure_tables():
                 last_name  TEXT,
                 passhash   TEXT NOT NULL DEFAULT '',
                 functions  TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT
             )
         """)
         # Migration / Backfill
         c.execute("PRAGMA table_info(users)")
         user_cols = {row[1] for row in c.fetchall()}
-        if "functions" not in user_cols:
-            c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
-        if "passhash" not in user_cols:
-            c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
-        if "created_at" not in user_cols:
-            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
-        # Normalize
-        c.execute("UPDATE users SET passhash = COALESCE(passhash,'')")
-        c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
+        def _add(col, ddl):
+            if col not in user_cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
+        _add("functions",  "functions TEXT DEFAULT ''")
+        _add("passhash",   "passhash  TEXT NOT NULL DEFAULT ''")
+        _add("status",     "status    TEXT NOT NULL DEFAULT 'active'")
+        _add("created_at", "created_at TEXT")
+
+        c.execute("UPDATE users SET passhash  = COALESCE(passhash,'')")
+        c.execute("UPDATE users SET status    = COALESCE(status,'active')")
+        c.execute("UPDATE users SET created_at= COALESCE(created_at, datetime('now'))")
 
         # --- FUNKTIONSKATALOG (Basis; Detailrechte pflegt users_admin) ---
         c.execute("""
@@ -76,9 +80,10 @@ def _ensure_tables():
         if have_funcs == 0:
             defaults = [
                 ("Admin", "Vollzugriff auf alle Module"),
-                ("Barleiter", "Zugriff auf Barumsätze & Planung"),
-                ("Lager", "Inventur & Artikelverwaltung"),
-                ("Inventur", "Nur Inventur- und Bestandsansicht"),
+                ("Betriebsleiter", "Eventverwaltung & Freigaben"),
+                ("Barleiter", "Barumsätze & Abrechnung (eigene Units)"),
+                ("Kassa", "Karten-/Barzahlungen (eigene Units)"),
+                ("Garderobe", "Garderobenabrechnung (eigene Units)"),
             ]
             c.executemany(
                 "INSERT INTO functions(name, description) VALUES(?,?)",
@@ -403,7 +408,56 @@ def _render_home():
                 unsafe_allow_html=True,
             )
 
-# ---------------- Betrieb (Grundparameter) ----------------
+# ---------------- Pending-Registrierungen (NEU) ----------------
+def _render_pending_registrations():
+    section_title("👤 Ausstehende Registrierungen")
+    pending = auth.list_pending_users()
+    if not pending:
+        st.caption("Keine offenen Registrierungen.")
+        return
+
+    # Optionale Schnellauswahl typischer Funktionen
+    function_presets = [
+        "Admin",
+        "Betriebsleiter",
+        "Barleiter",
+        "Kassa",
+        "Garderobe",
+    ]
+
+    for u in pending:
+        with st.container(border=True):
+            st.markdown(
+                f"**{u['username']}** — {u['first_name']} {u['last_name']}  \n"
+                f"<span style='opacity:.75'>E-Mail: {u['email']} · registriert: {u['created_at']}</span>",
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns([3,2])
+            with col1:
+                preset = st.selectbox(
+                    "Rolle/Funktionen (Vorlage)",
+                    options=["(keine Vorlage)"] + function_presets,
+                    key=f"preset_{u['username']}",
+                )
+                default_text = "" if preset == "(keine Vorlage)" else preset
+                functions = st.text_input(
+                    "Funktionen (frei editierbar, komma-getrennt)",
+                    key=f"fn_{u['username']}",
+                    value=default_text,
+                    placeholder="z. B. Barleiter, Kassa",
+                )
+            with col2:
+                cA, cB = st.columns(2)
+                if cA.button("✔️ Freigeben", use_container_width=True, key=f"approve_{u['username']}"):
+                    ok, msg = auth.approve_user(u["username"], functions)
+                    st.success(msg if ok else f"Fehler: {msg}")
+                    st.rerun()
+                if cB.button("🗑️ Verwerfen", use_container_width=True, key=f"reject_{u['username']}"):
+                    ok, msg = auth.reject_user(u["username"])
+                    st.warning(msg if ok else f"Fehler: {msg}")
+                    st.rerun()
+
 # ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
     section_title("🏢 Grundparameter des Betriebs")
@@ -674,6 +728,7 @@ def render_admin():
 
     # Basis-Hooks
     _ensure_tables()
+    # Changelog optional beibehalten
     _ensure_version_logged()
 
     # Kopf
@@ -681,13 +736,14 @@ def render_admin():
 
     # Tabs
     tabs = st.tabs([
-        "🏠 Übersicht",     # 0
-        "🏢 Betrieb",       # 1
-        "👤 Benutzer",      # 2
-        "💰 Fixkosten",     # 3
-        "🗂️ Datenbank",     # 4
-        "📦 Daten",         # 5 (Import-Tools)
-        "💾 Backups",       # 6
+        "🏠 Übersicht",         # 0
+        "🏢 Betrieb",           # 1
+        "👤 Benutzer",          # 2
+        "📝 Registrierungen",   # 3  <-- NEU
+        "💰 Fixkosten",         # 4
+        "🗂️ Datenbank",        # 5
+        "📦 Daten",             # 6 (Import-Tools)
+        "💾 Backups",           # 7
     ])
 
     with tabs[0]:
@@ -697,16 +753,18 @@ def render_admin():
     with tabs[2]:
         render_users_admin()
     with tabs[3]:
-        _render_fixcost_admin()
+        _render_pending_registrations()
     with tabs[4]:
-        _render_db_overview()
+        _render_fixcost_admin()
     with tabs[5]:
+        _render_db_overview()
+    with tabs[6]:
         try:
             from modules.import_items import render_data_tools
             render_data_tools()
         except Exception as e:
             st.error(f"Fehler beim Laden des Import-Tools: {e}")
-    with tabs[6]:
+    with tabs[7]:
         _render_backup_admin()
 
     # Footer
