@@ -5,13 +5,24 @@ import importlib, inspect, datetime
 from pathlib import Path
 
 from core.db import setup_db
-from core.auth import seed_admin_if_empty
-# ❌ NICHT mehr: from core.auth import ensure_admin_consistency
-from core import auth
+from core.auth import seed_admin_if_empty  # <- nur seed importieren
+from core import auth                      # <- ganzes Modul, damit wir später optional callen
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
+# ---------------- Initial Setup ----------------
+setup_db()
+seed_admin_if_empty()
+
+# Admin-Konsistenz erst NACH dem DB-Setup sicher & fehlertolerant prüfen
+try:
+    # Achtung: jetzt existiert die DB sicher
+    if hasattr(auth, "ensure_admin_consistency"):
+        auth.ensure_admin_consistency()
+except Exception:
+    # Leise überspringen; Details stehen in den Streamlit-Logs
+    pass
 # NEU: Import der Sicherung
 from core.auth import ensure_admin_consistency
 
