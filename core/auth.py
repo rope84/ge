@@ -86,53 +86,87 @@ def seed_admin_if_empty():
             ))
             cn.commit()
 
-def ensure_admin_consistency():
+def ensure_admin_consistency() -> None:
     """
-    Stellt sicher, dass es mindestens einen aktiven Admin gibt und dass
-    'oklub' (falls vorhanden) korrekt auf 'active' und Funktionen=Admin steht.
+    Stellt sicher, dass:
+      - Tabelle users existiert (Schema minimal),
+      - Spalten 'functions' und 'status' vorhanden sind,
+      - mind. ein Admin existiert (Seed 'oklub' falls nötig).
+    Läuft idempotent und darf beliebig oft aufgerufen werden.
     """
+    from core.db import conn  # local import, um Zyklen zu vermeiden
+
     with conn() as cn:
         c = cn.cursor()
-        # Check: gibt es mind. einen aktiven Admin?
-        row = c.execute("""
+
+        # 1) Tabelle users sicherstellen (minimal – vorhandene Felder bleiben erhalten)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT NOT NULL UNIQUE,
+                email      TEXT,
+                first_name TEXT,
+                last_name  TEXT,
+                passhash   TEXT NOT NULL DEFAULT '',
+                functions  TEXT DEFAULT '',
+                status     TEXT DEFAULT 'active',
+                created_at TEXT
+            )
+        """)
+
+        # 2) Fehlende Spalten dynamisch ergänzen
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        if "functions" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
+        if "passhash" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
+        if "status" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
+        if "created_at" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+
+        # 3) Null-Werte glätten
+        c.execute("UPDATE users SET passhash = COALESCE(passhash,'')")
+        c.execute("UPDATE users SET functions = COALESCE(functions,'')")
+        c.execute("UPDATE users SET status    = COALESCE(status,'active')")
+        c.execute("UPDATE users SET created_at= COALESCE(created_at, datetime('now'))")
+
+        # 4) Existiert ein Admin? (Admin ODER Betriebsleiter zählt)
+        have_admin = c.execute("""
             SELECT 1
               FROM users
-             WHERE LOWER(COALESCE(status,'active'))='active'
+             WHERE status='active'
                AND (
-                   LOWER(COALESCE(functions,'')) LIKE '%admin%'
-                   OR LOWER(COALESCE(functions,'')) LIKE '%betriebsleiter%'
+                    lower(functions) LIKE '%admin%'
+                 OR lower(functions) LIKE '%betriebsleiter%'
                )
              LIMIT 1
         """).fetchone()
-        if row:
-            return  # passt
 
-        # Versuche 'oklub' zu heben/ersetzen
-        row = c.execute("SELECT id FROM users WHERE username='oklub'").fetchone()
-        if row:
-            uid = row[0]
-            c.execute("""
-                UPDATE users
-                   SET status='active',
-                       functions='Admin'
-                 WHERE id=?
-            """, (uid,))
-            cn.commit()
-        else:
-            # Falls wirklich niemand da: Admin seed
-            c.execute("""
-                INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
-                VALUES(?,?,?,?,?,?,?,datetime('now'))
-            """, (
-                "oklub",
-                "admin@oklub.at",
-                "OKlub",
-                "Admin",
-                hash_pw("OderKlub!"),
-                "Admin",
-                "active",
-            ))
-            cn.commit()
+        if not have_admin:
+            # fallback-seed "oklub" als Admin – falls nicht vorhanden
+            row = c.execute("SELECT id, passhash FROM users WHERE username=?", ("oklub",)).fetchone()
+            if row is None:
+                c.execute("""
+                    INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
+                    VALUES(?,?,?,?,?,?, 'active', datetime('now'))
+                """, (
+                    "oklub",
+                    "admin@oklub.at",
+                    "OKlub",
+                    "Admin",
+                    hash_pw("OderKlub!"),
+                    "Admin",
+                ))
+            else:
+                uid, ph = row
+                # Rolle admin sicherstellen
+                c.execute("UPDATE users SET functions=? WHERE id=?", ("Admin", uid))
+                # Falls leer, default Passwort setzen (nur wenn wirklich leer)
+                if not ph:
+                    c.execute("UPDATE users SET passhash=? WHERE id=?", (hash_pw("OderKlub!"), uid))
+
+        cn.commit()
 
 # -----------------------------
 # Login
