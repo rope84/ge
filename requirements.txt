@@ -3,3 +3,4 @@ pandas
 plotly
 reportlab
 openpyxl
+feedparser>=6.0
