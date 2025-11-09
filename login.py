@@ -3,41 +3,40 @@ import streamlit as st
 
 def render_login_form(app_name: str, app_version: str):
     """
-    Minimaler Login ohne Box/Pille:
-    - Kein Container/Gradient/Shadow
-    - Zentriert, schmale Breite
-    - Version rechts oben
+    Minimaler Login ohne Box/Pille – überarbeitet:
+    - Breiteres Layout
+    - Checkbox unter Passwortfeld
+    - Placeholder: 'username'
     Rückgabe: (username, password, pressed)
     """
 
-    # ---- Nur Login-Ansicht stylen (ohne Box) ----
+    # ---- Stildefinition (leicht breiter & spacing optimiert) ----
     st.markdown(
         """
         <style>
-        /* Sidebar & Deko ausblenden */
-        [data-testid="stSidebar"] { display:none !important; }
-        [data-testid="stDecoration"], [data-testid="stToolbar"] { display:none !important; }
+        [data-testid="stSidebar"], [data-testid="stDecoration"], [data-testid="stToolbar"] {
+            display:none !important;
+        }
 
-        /* Haupt-Container schmal & zentriert, auch bei layout="wide" */
+        /* Breitere, zentrierte Fläche */
         .block-container {
-            max-width: 480px !important;
-            padding-top: 10vh !important;
+            max-width: 620px !important;
+            padding-top: 12vh !important;
             margin: 0 auto !important;
         }
 
-        /* Ruhiger, einfarbiger Hintergrund (keine „Pille“) */
         body { background: #0b0b12 !important; }
 
-        /* Headline + Badge */
-        .login-headline { font-size: 1.35rem; font-weight: 700; margin: 0; color: #e5e7eb; }
-        .login-sub      { font-size: .92rem;  opacity: .75;   margin: 2px 0 16px 0; color: #e5e7eb; }
-        .login-badge    { text-align:right; opacity:.65; font-size:.85rem; }
+        /* Kopfbereich */
+        .login-headline { font-size: 1.45rem; font-weight: 700; margin: 0; color: #e5e7eb; }
+        .login-sub      { font-size: .95rem;  opacity: .75; margin: 4px 0 18px 0; color: #e5e7eb; }
+        .login-badge    { text-align:right; opacity:.65; font-size:.9rem; }
 
-        /* Inputs */
+        /* Eingabefelder */
         input[type="text"], input[type="password"]{
             border-radius:12px !important;
             border:1px solid rgba(255,255,255,.18) !important;
-            padding:10px 12px !important;
+            padding:12px 14px !important;
             background: rgba(255,255,255,.03) !important;
             color:#e5e7eb !important;
             box-shadow:none !important;
@@ -47,25 +46,29 @@ def render_login_form(app_name: str, app_version: str):
             box-shadow:0 0 0 4px rgba(10,132,255,.25) !important;
         }
 
-        /* Button */
+        /* Buttons */
         button[kind="primary"]{
             border-radius:12px !important;
             background:#0A84FF !important;
-            color:#fff !important; font-weight:600 !important;
+            color:#fff !important;
+            font-weight:600 !important;
         }
-        button[kind="primary"]:hover{ filter:brightness(1.06); transform:translateY(-1px); }
+        button[kind="primary"]:hover{
+            filter:brightness(1.06);
+            transform:translateY(-1px);
+        }
 
         /* Fußzeile */
-        .login-footer { text-align:center; opacity:.65; font-size:.8rem; margin-top: 12px; }
+        .login-footer { text-align:center; opacity:.65; font-size:.8rem; margin-top: 16px; }
 
-        /* Sicherheitsnetz: leere „Pillen“-Buttons ggf. verstecken */
+        /* Sicherheitsnetz */
         button:empty { display:none !important; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---- Kopf (links Titel/Untertitel, rechts Version) – ohne Box ----
+    # ---- Kopf (Titel + Version) ----
     c1, c2 = st.columns([3, 1])
     with c1:
         st.markdown(f"<div class='login-headline'>{app_name} 🍸</div>", unsafe_allow_html=True)
@@ -73,12 +76,21 @@ def render_login_form(app_name: str, app_version: str):
     with c2:
         st.markdown(f"<div class='login-badge'>v{app_version}</div>", unsafe_allow_html=True)
 
-    # ---- Formular (Enter-Submit) ----
+    # ---- Formular ----
     with st.form("ge_login_form", clear_on_submit=False):
-        username = st.text_input("Benutzername", placeholder="z. B. oklub", key="ge_user")
+        username = st.text_input("Benutzername", placeholder="username", key="ge_user")
+        password = st.text_input("Passwort", type="password", placeholder="••••••••", key="ge_pass")
         show_pw  = st.checkbox("Passwort anzeigen", value=False, key="ge_showpw")
-        pw_type  = "default" if show_pw else "password"
-        password = st.text_input("Passwort", type=pw_type, placeholder="••••••••", key="ge_pass")
+
+        # Dynamisches Umschalten
+        if show_pw:
+            st.session_state["ge_pass_visible"] = st.text_input(
+                "Passwort (sichtbar)",
+                value=password,
+                type="default",
+                key="ge_pass_visible_field"
+            )
+
         st.caption("Hinweis: Mind. 6 Zeichen, 1 Großbuchstabe, 1 Sonderzeichen.")
         pressed = st.form_submit_button("Einloggen", use_container_width=True)
 
