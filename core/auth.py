@@ -77,31 +77,34 @@ def is_admin_session() -> bool:
 # User fetch / helpers
 # -----------------------------
 # modules/start.py – robuste Variante
-def _fetch_user(username: str) -> Optional[tuple]:
-    with conn() as cn:
-        c = cn.cursor()
-        # Prüfen, ob 'units' existiert
-        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
-        if "units" in cols:
-            return c.execute(
-                "SELECT id, username, functions, units FROM users WHERE username=?",
-                (username,),
-            ).fetchone()
-        else:
-            # Fallback ohne units – liefere leeren String an Position 3
-            row = c.execute(
-                "SELECT id, username, functions FROM users WHERE username=?",
-                (username,),
-            ).fetchone()
-            if not row:
-                return None
-            return (row[0], row[1], row[2], "")
-
-def _set_passhash(user_id: int, ph: str) -> None:
-    with conn() as cn:
-        c = cn.cursor()
-        c.execute("UPDATE users SET passhash=? WHERE id=?", (ph, user_id))
-        cn.commit()
+def _fetch_user(username: str) -> Optional[Dict]:
+    """Holt einen User-Datensatz. Gibt None zurück, wenn nicht gefunden oder DB-Fehler."""
+    uname = (username or "").strip()
+    if not uname:
+        return None
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            row = c.execute("""
+                SELECT id, username, email, first_name, last_name, passhash, functions, status, created_at
+                  FROM users
+                 WHERE username=?
+            """, (uname,)).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "username": row[1],
+        "email": row[2] or "",
+        "first_name": row[3] or "",
+        "last_name": row[4] or "",
+        "passhash": row[5] or "",
+        "functions": row[6] or "",
+        "status": (row[7] or "active").lower(),
+        "created_at": row[8] or "",
+    }
 
 # -----------------------------
 # Seed & Consistency
@@ -167,45 +170,53 @@ def ensure_admin_consistency() -> None:
 # -----------------------------
 # Login
 # -----------------------------
-def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
+ddef _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Returns: (ok, role, functions)
     - ok: True/False
     - role: 'admin'|'user' (nur wenn ok=True)
     - functions: originaler Functions-String (nur wenn ok=True)
     """
-    _ensure_user_schema()
-    u = _fetch_user(user)
-    if not u:
+    uname = (user or "").strip()
+    if not uname or not pw:
         return (False, None, None)
 
-    # Status prüfen
-    if (u["status"] or "active").lower() != "active":
+    u = _fetch_user(uname)
+    if not u:
+        # Benutzer existiert nicht oder DB-Fehler
+        return (False, None, None)
+
+    # Status prüfen (pending/disabled blocken)
+    status = (u.get("status") or "active").lower()
+    if status != "active":
         return (False, None, None)
 
     # First Login: wenn kein passhash gesetzt, jetzt setzen (nur wenn pw geliefert)
-    if not u["passhash"]:
-        if not pw:
+    ph = u.get("passhash") or ""
+    if not ph:
+        new_ph = hash_pw(pw)
+        try:
+            _set_passhash(u["id"], new_ph)
+        except Exception:
             return (False, None, None)
-        _set_passhash(u["id"], hash_pw(pw))
-        u["passhash"] = hash_pw(pw)
+        ph = new_ph
 
-    if not verify_pw(pw, u["passhash"]):
+    if not verify_pw(pw, ph):
         return (False, None, None)
 
-    role = _role_from_functions(u["functions"])
+    role = _role_from_functions(u.get("functions") or "")
 
     # Session setzen
     st.session_state.auth = True
     st.session_state.username   = u["username"]
     st.session_state.role       = role
-    st.session_state.scope      = u["functions"] or ""
-    st.session_state.email      = u["email"]
-    st.session_state.first_name = u["first_name"]
-    st.session_state.last_name  = u["last_name"]
+    st.session_state.scope      = u.get("functions") or ""
+    st.session_state.email      = u.get("email") or ""
+    st.session_state.first_name = u.get("first_name") or ""
+    st.session_state.last_name  = u.get("last_name") or ""
     st.session_state.login_ts   = datetime.utcnow().isoformat()
 
-    return (True, role, u["functions"])
+    return (True, role, u.get("functions") or "")
 
 # -----------------------------
 # Registration (public)
