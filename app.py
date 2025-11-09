@@ -108,27 +108,46 @@ def logout():
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
     if pressed:
-        # Harte Eingabe-Guards
         if not u or not p:
             st.error("Bitte Benutzername und Passwort eingeben.")
             return
 
+        # --- Sichtbares Debug: Zeig den DB-Zustand dieses Users an
         try:
-            ok, role, functions = getattr(auth, "_do_login")(u, p)  # <- WICHTIG: entpacken
-        except Exception:
-            st.error("Login-Fehler. Siehe Logs/Konsole.")
+            from core.db import conn
+            with conn() as cn:
+                c = cn.cursor()
+                row = c.execute(
+                    "SELECT username, COALESCE(status,'active') AS status, "
+                    "COALESCE(functions,'') AS functions, LENGTH(COALESCE(passhash,'')) AS pass_len "
+                    "FROM users WHERE username=?",
+                    (u.strip(),)
+                ).fetchone()
+            if row:
+                st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
+            else:
+                st.caption("Debug · Benutzer in DB nicht gefunden.")
+        except Exception as e:
+            st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
+
+        # --- Eigentlicher Login
+        try:
+            ok_role_tuple = getattr(auth, "_do_login")(u, p)  # (ok, role, functions)
+            ok = bool(ok_role_tuple[0])
+        except Exception as e:
+            st.error("Login-Fehler (interner Ausnahmefehler).")
+            # Wichtig: temporär sichtbar machen, dann wieder entfernen
+            st.exception(e)
             return
 
-        if ok is True:
-            # Rolle & restliche Session wurden in _do_login gesetzt.
-            # Optionaler Fallback, falls nichts gesetzt wäre:
+        if ok:
             if not st.session_state.get("role"):
-                st.session_state["role"] = role or "user"
-            if not st.session_state.get("scope"):
-                st.session_state["scope"] = functions or ""
+                st.session_state["role"] = "user"
             st.rerun()
         else:
-            st.error("❌ Falscher Benutzername oder Passwort")
+            # Häufigste Ursachen: status != active, Passwort falsch
+            # Wir differenzieren das hier grob anhand des DB-Zustands oben.
+            st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
 
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
