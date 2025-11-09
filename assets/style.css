@@ -140,17 +140,31 @@ button[kind="primary"]:hover {
   transform: translateY(-1px);
 }
 
-/* ---------- Badge-/„Pillen“-Killer (global) ---------- */
-/* Variiert je Streamlit-Version: wir eliminieren alle üblichen Kandidaten */
+/* ---------- Streamlit Header/Toolbar/Bades komplett entfernen ---------- */
+/* Gesamten App-Header (inkl. Toolbar) ausblenden */
+header[data-testid="stHeader"] {
+  display: none !important;
+}
+
+/* Obere Deko-Leiste (manche Builds rendern sie separat) */
+div[data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
-[data-testid="stDecoration"],
+[data-testid="stToolbar"] {
+  display: none !important;
+}
+
+/* Viewer-/Deploy-Badges in verschiedenen Builds */
 .stDeployButton,
 .viewerBadge_container__r3R7,
 .viewerBadge_link__qRIco,
 button[title="Manage app"],
-button[title="View source"] {
+button[title="View source"],
+button[aria-label="Share"],
+button[aria-label="App status"] {
   display: none !important;
 }
 
-/* Manche Builds platzieren ein „Header-Deko“-Element oben */
-header [data-testid="stToolbar"] { display: none !important; }
+/* Wenn der Header verschwindet, etwas Luft oben geben */
+.main .block-container {
+  padding-top: 16px !important;
+}
