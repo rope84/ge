@@ -109,10 +109,13 @@ def _fetch_user(username: str) -> Optional[Dict]:
 # -----------------------------
 # Seed & Consistency
 # -----------------------------
+# -----------------------------
+# Seed Default-Admin (Fallback)
+# -----------------------------
 def seed_admin_if_empty():
     """
-    Legt einen Default-Admin an, falls noch keine Benutzer existieren.
-    Wird beim ersten Start automatisch ausgeführt.
+    Erstellt einen Default-Admin ('oklub' / 'OderKlub!'), wenn noch keine Benutzer existieren.
+    Wird z. B. beim ersten Start der App von app.py aufgerufen.
     """
     try:
         with conn() as cn:
@@ -133,9 +136,9 @@ def seed_admin_if_empty():
             """)
             cn.commit()
 
+            # Prüfen, ob schon User existieren
             n = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             if n == 0:
-                # Seed Default-Admin
                 c.execute("""
                     INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
@@ -144,13 +147,13 @@ def seed_admin_if_empty():
                     "admin@oklub.at",
                     "OKlub",
                     "Admin",
-                    hash_pw("OderKlub!"),   # Default-Passwort
+                    hash_pw("OderKlub!"),
                     "Admin",
                 ))
                 cn.commit()
                 print("✅ Default-Admin 'oklub' wurde angelegt (Passwort: OderKlub!)")
     except Exception as e:
-        print(f"⚠️ seed_admin_if_empty Fehler: {e}")
+        print(f"⚠️ Fehler in seed_admin_if_empty(): {e}")
 
 def ensure_admin_consistency() -> None:
     """
