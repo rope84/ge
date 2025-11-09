@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.db import setup_db
 from core.auth import seed_admin_if_empty
+# ❌ NICHT mehr: from core.auth import ensure_admin_consistency
 from core import auth
 from core.ui_theme import use_theme
 from login import render_login_form
