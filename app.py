@@ -5,8 +5,8 @@ import importlib, inspect, datetime
 from pathlib import Path
 
 from core.db import setup_db
-from core.auth import seed_admin_if_empty  # <- nur seed importieren
-from core import auth                      # <- ganzes Modul, damit wir später optional callen
+from core.db import setup_db
+from core.auth import ensure_admin_consistency
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
