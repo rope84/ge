@@ -22,11 +22,11 @@ def verify_pw(pw: str, ph: str) -> bool:
 # -----------------------------
 # Schema-Sicherung
 # -----------------------------
+# core/auth.py – im Block _ensure_user_schema()
+
 def _ensure_user_schema() -> None:
-    """Stellt sicher, dass die users-Tabelle existiert und alle benötigten Spalten hat."""
     with conn() as cn:
         c = cn.cursor()
-        # Basistabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,8 +40,8 @@ def _ensure_user_schema() -> None:
                 created_at TEXT
             )
         """)
-        # Spalten nachziehen
         cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+
         def _add(col: str, ddl: str):
             if col not in cols:
                 c.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
@@ -50,12 +50,14 @@ def _ensure_user_schema() -> None:
         _add("functions",  "functions  TEXT DEFAULT ''")
         _add("status",     "status     TEXT NOT NULL DEFAULT 'active'")
         _add("created_at", "created_at TEXT")
+        # ⬇️ NEU: Units-Spalte für Zuweisungen (z. B. "bar:1,bar:2,cash:1")
+        _add("units",      "units      TEXT DEFAULT ''")
 
-        # Nulls bereinigen
         c.execute("UPDATE users SET passhash   = COALESCE(passhash,'')")
         c.execute("UPDATE users SET functions  = COALESCE(functions,'')")
         c.execute("UPDATE users SET status     = COALESCE(status,'active')")
         c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
+        c.execute("UPDATE users SET units      = COALESCE(units,'')")  # ⬅️ Backfill
         cn.commit()
 
 # -----------------------------
@@ -74,29 +76,26 @@ def is_admin_session() -> bool:
 # -----------------------------
 # User fetch / helpers
 # -----------------------------
-def _fetch_user(username: str) -> Optional[Dict]:
-    if not username:
-        return None
+# modules/start.py – robuste Variante
+def _fetch_user(username: str) -> Optional[tuple]:
     with conn() as cn:
         c = cn.cursor()
-        row = c.execute("""
-            SELECT id, username, email, first_name, last_name, passhash, functions, status, created_at
-              FROM users
-             WHERE username=?
-        """, (username.strip(),)).fetchone()
-    if not row:
-        return None
-    return {
-        "id": row[0],
-        "username": row[1],
-        "email": row[2] or "",
-        "first_name": row[3] or "",
-        "last_name": row[4] or "",
-        "passhash": row[5] or "",
-        "functions": row[6] or "",
-        "status": (row[7] or "active").lower(),
-        "created_at": row[8] or "",
-    }
+        # Prüfen, ob 'units' existiert
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        if "units" in cols:
+            return c.execute(
+                "SELECT id, username, functions, units FROM users WHERE username=?",
+                (username,),
+            ).fetchone()
+        else:
+            # Fallback ohne units – liefere leeren String an Position 3
+            row = c.execute(
+                "SELECT id, username, functions FROM users WHERE username=?",
+                (username,),
+            ).fetchone()
+            if not row:
+                return None
+            return (row[0], row[1], row[2], "")
 
 def _set_passhash(user_id: int, ph: str) -> None:
     with conn() as cn:
