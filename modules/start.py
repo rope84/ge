@@ -1,12 +1,28 @@
 # modules/start.py
 import streamlit as st
-import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from core.db import conn
 from core.config import APP_NAME, APP_VERSION
 
 # ------------------------------------------------
-# Helpers (minimal & robust)
+# DB-Helpers (robust & schema-aware)
+# ------------------------------------------------
+
+def _table_exists(c, name: str) -> bool:
+    return c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone() is not None
+
+def _has_column(c, table: str, col: str) -> bool:
+    try:
+        cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        return col in cols
+    except Exception:
+        return False
+
+# ------------------------------------------------
+# Generic helpers
 # ------------------------------------------------
 
 def _decode_units(units: str) -> Dict[str, List[int]]:
@@ -27,133 +43,175 @@ def _decode_units(units: str) -> Dict[str, List[int]]:
         out[k] = sorted(out[k])
     return out
 
-def _fetch_user(username: str) -> Optional[tuple]:
+def _fetch_user_row(username: str) -> Optional[Tuple[int, str, str, str]]:
+    """Gibt (id, username, functions, units_str) zurück — units_str='' wenn Spalte fehlt oder leer."""
+    if not username:
+        return None
     with conn() as cn:
         c = cn.cursor()
-        return c.execute(
-            "SELECT id, username, functions, units FROM users WHERE username=?",
-            (username,),
-        ).fetchone()
+        if not _table_exists(c, "users"):
+            return None
+        has_units = _has_column(c, "users", "units")
+        if has_units:
+            row = c.execute(
+                "SELECT id, username, functions, COALESCE(units,'') FROM users WHERE username=?",
+                (username,),
+            ).fetchone()
+            return row
+        else:
+            row = c.execute(
+                "SELECT id, username, functions FROM users WHERE username=?",
+                (username,),
+            ).fetchone()
+            if not row:
+                return None
+            return (row[0], row[1], row[2], "")
 
 def _is_admin_manager(functions: str) -> bool:
     funcs = [f.strip().lower() for f in (functions or "").split(",") if f.strip()]
     return ("admin" in funcs) or ("betriebsleiter" in funcs)
 
-def _list_open_events() -> List[tuple]:
-    """open = nicht freigegeben/geschlossen"""
-    with conn() as cn:
-        c = cn.cursor()
-        return c.execute("""
-            SELECT id, event_date, name, status
-              FROM events
-             WHERE status='open'
-             ORDER BY event_date DESC, id DESC
-        """).fetchall()
-
-def _count_open_tasks_for_user(username: str, functions: str, units_str: str) -> int:
-    """
-    Für Admin/Betriebsleiter: Anzahl offener Events.
-    Für Leiter (Bar/Kassa/Garderobe): Anzahl offener Events, bei denen er mindestens eine Unit zugewiesen hat.
-    (Wir zählen nur Events – keine Unit-Details. Clean & schnell.)
-    """
-    open_events = _list_open_events()
-    if not open_events:
-        return 0
-
-    if _is_admin_manager(functions):
-        return len(open_events)
-
-    assigned = _decode_units(units_str)
-    if not any(assigned.values()):
-        return 0
-
-    # User hat mindestens eine Unit -> jedes offene Event ist für ihn relevant
-    return len(open_events)
-
 # ------------------------------------------------
-# UI
+# Business helpers
 # ------------------------------------------------
 
-def _hero_card(title: str, subtitle: str, badge: str = ""):
-    # Kein Container, kein Gradient, keine Border – nur Text + dezente Versionszeile rechts
-    colA, colB = st.columns([3, 1])
-    with colA:
-        st.markdown(f"### {title}")
-        st.caption(subtitle)
-    with colB:
-        if badge:
-            st.markdown(
-                f"<div style='text-align:right; opacity:.65; font-size:.9rem;'>{badge}</div>",
-                unsafe_allow_html=True,
-            )
-    with st.container():
-        st.markdown("<div class='start-hero'>", unsafe_allow_html=True)
-        colA, colB = st.columns([3,1])
-        with colA:
-            st.markdown(f"<div class='start-title'>{title}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='start-sub'>{subtitle}</div>", unsafe_allow_html=True)
-        with colB:
-            if badge:
-                st.markdown(f"<div style='text-align:right'><span class='start-badge'>{badge}</span></div>", unsafe_allow_html=True)
-        # WICHTIG: Box sauber schließen, sonst entstehen „Geister-Blöcke“
-        st.markdown("</div>", unsafe_allow_html=True)
-
-def _kpi_block(value: int, label: str):
-    st.markdown(f"<div class='kpi'>{value}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='kpi-sub'>{label}</div>", unsafe_allow_html=True)
-
-def _cta_buttons(is_mgr: bool):
-    c1, c2 = st.columns([1,1])
-    with c1:
-        if st.button("➡️ Zur Abrechnung", type="primary", use_container_width=True):
-            st.session_state["nav_choice"] = "Abrechnung"
-            st.rerun()
-    with c2:
-        if is_mgr:
-            if st.button("🗂️ Event anlegen / bearbeiten", use_container_width=True):
-                st.session_state["nav_choice"] = "Abrechnung"
-                st.rerun()
-
-def _activities():
-    st.subheader("🕑 Letzte Aktivitäten")
+def _get_int_meta(keys: List[str], default: int = 0) -> int:
     with conn() as cn:
         c = cn.cursor()
-        rows = c.execute("""
-            SELECT ts, user, action, details
-              FROM audit_log
-             ORDER BY id DESC
-             LIMIT 6
-        """).fetchall()
-    if not rows:
-        st.caption("Noch keine Aktivitäten protokolliert.")
-        return
-    for ts, user, action, details in rows:
-        st.markdown(f"- `{ts}` · **{user or '—'}** · *{action}* — {details}")
+        if not _table_exists(c, "meta"):
+            return default
+        for k in keys:
+            r = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+            if r and str(r[0]).strip() != "":
+                try:
+                    return max(0, int(float(str(r[0]).strip())))
+                except Exception:
+                    continue
+    return default
 
-def _gastro_news():
-    st.subheader("📰 Gastro-News")
-    st.caption("(optional, per RSS – wird nur angezeigt, wenn abrufbar)")
+def _counts_from_meta() -> Dict[str, int]:
+    return {
+        "bars": _get_int_meta(["bars_count", "business_bars", "num_bars"], 0),
+        "registers": _get_int_meta(["registers_count", "business_registers", "num_registers", "kassen_count"], 0),
+        "cloakrooms": _get_int_meta(["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"], 0),
+    }
+
+def _event_stats() -> Tuple[int, int]:
+    """
+    Liefert (open_count, closed_count).
+    closed = Events mit status != 'open' (robust, falls andere Stati existieren).
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        if not _table_exists(c, "events"):
+            return (0, 0)
+        open_cnt = c.execute("SELECT COUNT(*) FROM events WHERE status='open'").fetchone()[0]
+        total = c.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        # closed/approved/etc. = total - open (robust, falls andere Stati genutzt werden)
+        closed_cnt = max(0, (total or 0) - (open_cnt or 0))
+        return (open_cnt or 0, closed_cnt or 0)
+
+def _latest_closed_event_id() -> Optional[int]:
+    """Nimmt zuerst einen geschlossenen/abgeschlossenen Event, sonst den jüngsten beliebigen."""
+    with conn() as cn:
+        c = cn.cursor()
+        if not _table_exists(c, "events"):
+            return None
+        # bevorzugt: closed/approved (status != 'open'); nach Datum, dann ID
+        row = c.execute("""
+            SELECT id FROM events
+             WHERE COALESCE(status,'open') <> 'open'
+             ORDER BY COALESCE(event_date,'9999-12-31') DESC, id DESC
+             LIMIT 1
+        """).fetchone()
+        if row:
+            return row[0]
+        # Fallback: jüngster Event
+        row = c.execute("""
+            SELECT id FROM events
+             ORDER BY COALESCE(event_date,'9999-12-31') DESC, id DESC
+             LIMIT 1
+        """).fetchone()
+        return row[0] if row else None
+
+def _sum_for_unit(event_id: int, unit_type: str, unit_no: int) -> float:
+    """
+    Summiert Felder je Einheit:
+    - bar  : cash + pos1 + pos2 + pos3 + voucher
+    - cash : cash + card
+    - cloak: coats_eur + bags_eur
+    """
+    if event_id is None:
+        return 0.0
+    with conn() as cn:
+        c = cn.cursor()
+        if not _table_exists(c, "cashflow_item"):
+            return 0.0
+        rows = c.execute(
+            """SELECT field, value FROM cashflow_item
+               WHERE event_id=? AND unit_type=? AND unit_no=?""",
+            (event_id, unit_type, unit_no),
+        ).fetchall()
+    values = {k: 0.0 for k in ["cash","pos1","pos2","pos3","voucher","card","coats_eur","bags_eur"]}
+    for f, v in rows:
+        try:
+            values[f] = float(v)
+        except Exception:
+            pass
+    if unit_type == "bar":
+        return values["cash"] + values["pos1"] + values["pos2"] + values["pos3"] + values["voucher"]
+    if unit_type == "cash":
+        return values["cash"] + values["card"]
+    return values["coats_eur"] + values["bags_eur"]
+
+# ------------------------------------------------
+# UI building blocks (Admin-Cockpit Stil)
+# ------------------------------------------------
+
+def _card_html(title: str, color: str, lines: List[str]) -> str:
+    body = "<br/>".join([f"<span style='opacity:.85;font-size:12px'>{ln}</span>" for ln in lines])
+    return f"""
+    <div style="
+        display:flex; gap:12px; align-items:flex-start;
+        padding:12px 14px; border-radius:14px;
+        background:rgba(255,255,255,0.03);
+        box-shadow:0 6px 16px rgba(0,0,0,0.15);
+        position:relative; overflow:hidden;">
+      <div style="
+        position:absolute; left:0; top:0; bottom:0; width:6px;
+        background:linear-gradient(180deg,{color},{color}55);
+        border-top-left-radius:14px; border-bottom-left-radius:14px;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:{color}; margin-top:4px;"></div>
+      <div style="font-size:13px;">
+        <b>{title}</b><br/>{body}
+      </div>
+    </div>
+    """
+
+def _section_title(title: str, icon: str = ""):
+    icon_html = f"{icon} " if icon else ""
+    st.markdown(f"### {icon_html}{title}")
+
+# ------------------------------------------------
+# News (ORF)
+# ------------------------------------------------
+
+def _news_orf():
+    _section_title("News", "📰")
+    st.caption("Quelle: ORF News")
     try:
         import feedparser
-        FEEDS = [
-            "https://www.falstaff.at/rss.xml",
-            "https://www.rollingpin.at/feed",
-            "https://www.gastronews.wien/feed/",
-        ]
-        for url in FEEDS:
-            d = feedparser.parse(url)
-            if d.bozo:
-                continue
-            if d.feed.get("title"):
-                st.markdown(f"**{d.feed.title}**")
-            for entry in (d.entries or [])[:3]:
-                title = entry.get("title", "ohne Titel")
-                link  = entry.get("link", None)
-                if link:
-                    st.markdown(f"- [{title}]({link})")
-                else:
-                    st.markdown(f"- {title}")
-            st.markdown("---")
+        d = feedparser.parse("https://rss.orf.at/news.xml")
+        if getattr(d, "bozo", 0):
+            st.caption("RSS nicht verfügbar.")
+            return
+        for entry in (getattr(d, "entries", []) or [])[:5]:
+            title = entry.get("title", "ohne Titel")
+            link  = entry.get("link", None)
+            if link:
+                st.markdown(f"- [{title}]({link})")
+            else:
+                st.markdown(f"- {title}")
     except Exception:
         st.caption("RSS nicht verfügbar.")
 
@@ -162,11 +220,10 @@ def _gastro_news():
 # ------------------------------------------------
 
 def render_start(username: str = "Gast"):
-    # --- Pill/Badge/Decoration-Killer (global, sehr aggressiv) ---
+    # Deko/Toolbar/Pillen global ausblenden (kein sichtbares Artefakt über dem Header)
     st.markdown(
         """
         <style>
-        /* Kill Streamlit-Decorations / Badges / Toolbar-Pillen */
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stCloudAppStatus"],
@@ -177,38 +234,78 @@ def render_start(username: str = "Gast"):
         header [data-testid="stHeaderActionButtons"],
         header [data-testid="stActionButton"],
         button[title="Manage app"],
-        button[title="View source"] { display: none !important; }
+        button[title="View source"] { display:none !important; }
         </style>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
-    # Kopfbereich / Hero
-    user_row = _fetch_user(username)
-    functions = (user_row[2] if user_row else "") or ""
-    units_str = (user_row[3] if user_row else "") or ""
+    # Header (schlank, ohne Box)
+    st.markdown(f"### Willkommen, {username or 'Gast'} 👋")
+    st.caption(f"{APP_NAME} v{APP_VERSION}")
+
+    # User + Sicht
+    urow = _fetch_user_row(username)
+    functions = (urow[2] if urow else "") or ""
+    units_str = (urow[3] if urow else "") or ""
     is_mgr = _is_admin_manager(functions)
+    assigned = _decode_units(units_str)
 
-    _hero_card(
-        title=f"Willkommen, {username or 'Gast'} 👋",
-        subtitle="Hier siehst du auf einen Blick, ob Abrechnungen offen sind.",
-        badge=f"{APP_NAME} v{APP_VERSION}"
-    )
+    # Kennzahlen-Karten
+    open_cnt, closed_cnt = _event_stats()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(_card_html("Abrechnungen – Status", "#3b82f6", [
+            f"Offen: {open_cnt}",
+            f"Abgeschlossen: {closed_cnt}",
+        ]), unsafe_allow_html=True)
 
-    # KPIs & CTA
-    open_cnt = _count_open_tasks_for_user(username, functions, units_str)
+    # Letzter Umsatz je Bar (Global vs. eigene Bars)
+    counts = _counts_from_meta()
+    last_ev_id = _latest_closed_event_id()
+    lines_bars: List[str] = []
+    if counts["bars"] > 0:
+        if is_mgr:
+            # Admin/Betriebsleiter: alle Bars
+            for i in range(1, counts["bars"] + 1):
+                total = _sum_for_unit(last_ev_id, "bar", i)
+                lines_bars.append(f"Bar {i}: {total:,.2f} €")
+        else:
+            # Leiter: nur eigene Bars
+            own = assigned["bar"]
+            if own:
+                for i in own:
+                    total = _sum_for_unit(last_ev_id, "bar", i)
+                    lines_bars.append(f"Bar {i}: {total:,.2f} €")
+            else:
+                lines_bars.append("Keine Bars zugewiesen.")
+    else:
+        lines_bars.append("Keine Bars konfiguriert.")
 
-    kpi_col, _ = st.columns([1,2])
-    with kpi_col:
-        _kpi_block(open_cnt, "offene Abrechnungstage")
-
-    _cta_buttons(is_mgr)
+    with c2:
+        st.markdown(_card_html("Letzter Umsatz pro Bar", "#10b981", lines_bars), unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # Aktivitäten & News (zwei Spalten)
-    left, right = st.columns([2,1])
+    # Aktivitäten + News
+    left, right = st.columns([2, 1])
     with left:
-        _activities()
+        _section_title("Letzte Aktivitäten", "🕑")
+        with conn() as cn:
+            c = cn.cursor()
+            if not _table_exists(c, "audit_log"):
+                st.caption("Noch keine Aktivitäten protokolliert.")
+            else:
+                rows = c.execute("""
+                    SELECT ts, user, action, details
+                      FROM audit_log
+                     ORDER BY id DESC
+                     LIMIT 8
+                """).fetchall()
+                if not rows:
+                    st.caption("Noch keine Aktivitäten protokolliert.")
+                else:
+                    for ts, user, action, details in rows:
+                        st.markdown(f"- `{ts}` · **{user or '—'}** · *{action}* — {details}")
     with right:
-        _gastro_news()
+        _news_orf()
