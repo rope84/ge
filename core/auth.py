@@ -3,7 +3,7 @@ import re
 import hashlib
 import streamlit as st
 from datetime import datetime
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 from core.db import conn
 from core.config import APP_NAME, APP_VERSION
 
@@ -14,9 +14,41 @@ def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
 
 def verify_pw(pw: str, ph: str) -> bool:
-    if not ph:
-        return False
-    return hash_pw(pw) == ph
+    return bool(ph) and hash_pw(pw) == ph
+
+# ---------------------------------------------------------
+# Schema-Sicherung (fügt fehlende Spalten hinzu)
+# ---------------------------------------------------------
+def _ensure_user_schema():
+    with conn() as cn:
+        c = cn.cursor()
+        # users-Tabelle sicherstellen
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                passhash TEXT,
+                functions TEXT,
+                units TEXT,
+                role TEXT,             -- legacy (wird nicht mehr aktiv genutzt)
+                scope TEXT,            -- legacy
+                status TEXT NOT NULL DEFAULT 'active',   -- 'pending' | 'active' | 'disabled'
+                created_at TEXT
+            )
+        """)
+        # fehlende Spalten ggf. ergänzen
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        def _add(col, sql):
+            if col not in cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {sql}")
+        _add("status", "status TEXT NOT NULL DEFAULT 'active'")
+        _add("functions", "functions TEXT")
+        _add("units", "units TEXT")
+        _add("created_at", "created_at TEXT")
+        cn.commit()
 
 def _role_from_functions(functions: str) -> str:
     funcs = [f.strip().lower() for f in (functions or "").split(",") if f.strip()]
@@ -24,67 +56,15 @@ def _role_from_functions(functions: str) -> str:
         return "admin"
     return "user"
 
-# -------- Schema-Sicherung (Create/Migrate) --------
-def ensure_user_schema():
-    """
-    Stellt sicher, dass es die Tabelle 'users' mit allen benötigten Spalten gibt.
-    Fehlen Spalten, werden sie via ALTER TABLE hinzugefügt.
-    """
-    required_cols = {
-        "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
-        "username": "TEXT NOT NULL",
-        "passhash": "TEXT",
-        "role": "TEXT",            # Legacy-Kompatibilität
-        "scope": "TEXT",           # Legacy-Kompatibilität
-        "functions": "TEXT",
-        "email": "TEXT",
-        "first_name": "TEXT",
-        "last_name": "TEXT",
-        "created_at": "TEXT",
-    }
-
-    with conn() as cn:
-        c = cn.cursor()
-        # Gibt es die Tabelle?
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-        exists = c.fetchone() is not None
-
-        if not exists:
-            # Neu anlegen mit vollständigem Schema
-            cols_sql = ", ".join([f"{k} {v}" for k, v in required_cols.items()])
-            c.execute(f"CREATE TABLE users ({cols_sql})")
-            # UNIQUE-Index auf username
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username ON users(username)")
-            cn.commit()
-            return
-
-        # Tabelle existiert -> fehlende Spalten ergänzen
-        current = {row[1] for row in c.execute("PRAGMA table_info(users)")}
-        for col, decl in required_cols.items():
-            if col not in current:
-                c.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
-        # Index sicherstellen
-        c.execute("""
-            SELECT name FROM sqlite_master
-             WHERE type='index' AND name='ux_users_username'
-        """)
-        if c.fetchone() is None:
-            try:
-                c.execute("CREATE UNIQUE INDEX ux_users_username ON users(username)")
-            except Exception:
-                pass
-        cn.commit()
-
-# -------- Seeding & Konsistenz --------
 def seed_admin_if_empty():
-    ensure_user_schema()
+    _ensure_user_schema()
     with conn() as cn:
         c = cn.cursor()
         n = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if n == 0:
             c.execute("""
-                INSERT INTO users(username, email, first_name, last_name, passhash, functions, role, scope, created_at)
-                VALUES(?,?,?,?,?,?,?,?,datetime('now'))
+                INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
+                VALUES(?,?,?,?,?,?,?,?)
             """, (
                 "oklub",
                 "admin@oklub.at",
@@ -92,46 +72,18 @@ def seed_admin_if_empty():
                 "Admin",
                 hash_pw("OderKlub!"),
                 "Admin",
-                "admin",   # legacy role befüllen
-                "Admin",   # legacy scope befüllen
+                "active",
+                datetime.utcnow().isoformat(),
             ))
             cn.commit()
 
-def ensure_admin_consistency():
-    """
-    - Stellt sicher, dass 'functions' existiert und der User 'oklub' Admin-Rechte hat.
-    - Hält legacy 'role' im Einklang mit 'functions'.
-    """
-    ensure_user_schema()
-    with conn() as cn:
-        c = cn.cursor()
-        # functions sicher für oklub
-        c.execute("""
-            UPDATE users
-               SET functions = CASE WHEN TRIM(COALESCE(functions,''))='' THEN 'Admin' ELSE functions END
-             WHERE username='oklub'
-        """)
-        # legacy role entsprechend setzen
-        c.execute("""
-            UPDATE users
-               SET role = CASE
-                            WHEN LOWER(COALESCE(functions,'')) LIKE '%admin%' OR
-                                 LOWER(COALESCE(functions,'')) LIKE '%betriebsleiter%'
-                            THEN 'admin'
-                            ELSE 'user'
-                          END
-             WHERE username='oklub'
-        """)
-        cn.commit()
-
-# -------- User-Funktionen --------
 def _fetch_user(username: str) -> Optional[Dict]:
+    _ensure_user_schema()
     with conn() as cn:
         c = cn.cursor()
         row = c.execute("""
-            SELECT id, username, email, first_name, last_name, passhash, functions, role, scope, created_at
-              FROM users
-             WHERE username=?
+            SELECT id, username, email, first_name, last_name, passhash, functions, units, status, created_at
+            FROM users WHERE username=?
         """, (username.strip(),)).fetchone()
     if not row:
         return None
@@ -143,8 +95,8 @@ def _fetch_user(username: str) -> Optional[Dict]:
         "last_name": row[4] or "",
         "passhash": row[5] or "",
         "functions": row[6] or "",
-        "role": row[7] or "",
-        "scope": row[8] or "",
+        "units": row[7] or "",
+        "status": row[8] or "active",
         "created_at": row[9] or "",
     }
 
@@ -154,16 +106,55 @@ def _set_passhash(user_id: int, ph: str):
         c.execute("UPDATE users SET passhash=? WHERE id=?", (ph, user_id))
         cn.commit()
 
+# ---------------------------------------------------------
+# Registrierung
+# ---------------------------------------------------------
+def register_user(username: str, first_name: str, last_name: str, email: str, password: str) -> tuple[bool, str]:
+    """
+    Lege einen User mit status='pending' an. Admin muss freigeben.
+    """
+    _ensure_user_schema()
+
+    if not username or not password or not email:
+        return False, "Bitte alle Pflichtfelder ausfüllen."
+    if not PWD_PATTERN.match(password):
+        return False, "Passwort zu schwach (min. 6, 1 Großbuchstabe, 1 Sonderzeichen)."
+
+    username = username.strip()
+    with conn() as cn:
+        c = cn.cursor()
+        exists = c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
+        if exists:
+            return False, "Benutzername ist bereits vergeben."
+        c.execute("""
+            INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
+            VALUES(?,?,?,?,?,?,?,?)
+        """, (
+            username,
+            email.strip(),
+            first_name.strip(),
+            last_name.strip(),
+            hash_pw(password),
+            "",              # noch keine Funktionen
+            "pending",       # wartet auf Freigabe
+            datetime.utcnow().isoformat(),
+        ))
+        cn.commit()
+    return True, "Registrierung eingegangen. Wir prüfen deine Anfrage."
+
+# ---------------------------------------------------------
+# Login
+# ---------------------------------------------------------
 def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    Rückgabe: (ok, role, functions)
+    Rückgabe: (ok, role, functions). Login nur bei status='active'.
     """
-    ensure_user_schema()
+    _ensure_user_schema()
     u = _fetch_user(user)
     if not u:
         return (False, None, None)
 
-    # First login: noch kein Passwort gesetzt -> jetzt setzen
+    # First login: falls passhash leer (nicht üblich bei Registrierung)
     if not u["passhash"]:
         if not pw:
             return (False, None, None)
@@ -173,13 +164,16 @@ def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     if not verify_pw(pw, u["passhash"]):
         return (False, None, None)
 
-    role = _role_from_functions(u["functions"]) or (u["role"] or "user")
+    if (u["status"] or "active") != "active":
+        # Pending oder disabled -> kein Login
+        return (False, None, None)
 
-    # Session-State füllen
-    st.session_state.auth = True
+    role = _role_from_functions(u["functions"])
+
+    st.session_state.auth       = True
     st.session_state.username   = u["username"]
     st.session_state.role       = role
-    st.session_state.scope      = u["functions"] or u["scope"] or ""
+    st.session_state.scope      = u["functions"]
     st.session_state.email      = u["email"]
     st.session_state.first_name = u["first_name"]
     st.session_state.last_name  = u["last_name"]
@@ -187,23 +181,53 @@ def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
 
     return (True, role, u["functions"])
 
-def login_required(app_name: str, app_version: str):
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    st.caption(app_version)
-    st.subheader("Login")
+# ---------------------------------------------------------
+# Admin-Helfer für Freigaben
+# ---------------------------------------------------------
+def list_pending_users() -> List[Dict]:
+    _ensure_user_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        rows = c.execute("""
+            SELECT id, username, email, first_name, last_name, created_at
+            FROM users WHERE status='pending' ORDER BY created_at ASC
+        """).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r[0],
+            "username": r[1],
+            "email": r[2],
+            "first_name": r[3] or "",
+            "last_name": r[4] or "",
+            "created_at": r[5] or "",
+        })
+    return out
 
-    u = st.text_input("Benutzername", key="lr_user")
-    p = st.text_input("Passwort", type="password", key="lr_pw")
+def approve_user(username: str, functions: str) -> tuple[bool, str]:
+    _ensure_user_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        if not c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+            return False, "Benutzer nicht gefunden."
+        c.execute("UPDATE users SET status='active', functions=? WHERE username=?", (functions.strip(), username))
+        cn.commit()
+    return True, "Benutzer freigegeben."
 
-    c1, c2 = st.columns([2,1])
-    if c1.button("Anmelden", use_container_width=True):
-        ok, _, _ = _do_login(u, p)
-        if not ok:
-            st.error("Falscher Benutzername oder Passwort.")
+def reject_user(username: str) -> tuple[bool, str]:
+    _ensure_user_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        if not c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+            return False, "Benutzer nicht gefunden."
+        # Entweder löschen oder auf 'disabled' setzen – hier löschen wir
+        c.execute("DELETE FROM users WHERE username=?", (username,))
+        cn.commit()
+    return True, "Registrierung verworfen."
 
-    if c2.button("Passwort zurücksetzen", use_container_width=True):
-        st.info("Bitte kontaktieren Sie den Administrator: admin@o-der-klub.at")
-
+# ---------------------------------------------------------
+# PW-Änderungen (bestehend)
+# ---------------------------------------------------------
 def change_password(username: str, old_pw: str, new_pw: str) -> tuple[bool, str]:
     if not PWD_PATTERN.match(new_pw):
         return False, "Passwort zu schwach (min. 6, 1 Großbuchstabe, 1 Sonderzeichen)."
