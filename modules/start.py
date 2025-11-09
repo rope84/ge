@@ -75,28 +75,17 @@ def _count_open_tasks_for_user(username: str, functions: str, units_str: str) ->
 # ------------------------------------------------
 
 def _hero_card(title: str, subtitle: str, badge: str = ""):
-    st.markdown(
-        """
-        <style>
-        .start-hero {
-            background: linear-gradient(180deg, rgba(34,34,48,0.9) 0%, rgba(18,18,28,0.9) 100%);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 18px;
-            padding: 20px 20px;
-            box-shadow: 0 16px 38px rgba(0,0,0,0.35);
-        }
-        .start-title { font-size: 1.2rem; font-weight: 700; margin: 0; }
-        .start-sub   { opacity: .75; margin-top: 4px; font-size: .92rem; }
-        .start-badge {
-            display:inline-block; padding: 4px 10px; border-radius:999px;
-            border:1px solid #FFFFFF22; font-size:.8rem; opacity:.85;
-        }
-        .kpi     { font-size: 2rem; font-weight: 800; margin: 12px 0 2px 0; }
-        .kpi-sub { opacity:.7; font-size:.85rem; margin-bottom: 12px; }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+    # Kein Container, kein Gradient, keine Border – nur Text + dezente Versionszeile rechts
+    colA, colB = st.columns([3, 1])
+    with colA:
+        st.markdown(f"### {title}")
+        st.caption(subtitle)
+    with colB:
+        if badge:
+            st.markdown(
+                f"<div style='text-align:right; opacity:.65; font-size:.9rem;'>{badge}</div>",
+                unsafe_allow_html=True,
+            )
     with st.container():
         st.markdown("<div class='start-hero'>", unsafe_allow_html=True)
         colA, colB = st.columns([3,1])
