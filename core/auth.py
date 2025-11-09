@@ -109,26 +109,48 @@ def _fetch_user(username: str) -> Optional[Dict]:
 # -----------------------------
 # Seed & Consistency
 # -----------------------------
-def seed_admin_if_empty() -> None:
-    """Falls noch kein User existiert, einen Default-Admin anlegen."""
-    _ensure_user_schema()
-    with conn() as cn:
-        c = cn.cursor()
-        n = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        if n == 0:
+def seed_admin_if_empty():
+    """
+    Legt einen Default-Admin an, falls noch keine Benutzer existieren.
+    Wird beim ersten Start automatisch ausgeführt.
+    """
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            # Tabelle sicherstellen
             c.execute("""
-                INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
-                VALUES(?,?,?,?,?,?,?, datetime('now'))
-            """, (
-                "oklub",
-                "admin@oklub.at",
-                "OKlub",
-                "Admin",
-                hash_pw("OderKlub!"),
-                "Admin",
-                "active",
-            ))
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username   TEXT NOT NULL UNIQUE,
+                    email      TEXT,
+                    first_name TEXT,
+                    last_name  TEXT,
+                    passhash   TEXT NOT NULL DEFAULT '',
+                    functions  TEXT DEFAULT '',
+                    status     TEXT DEFAULT 'active',
+                    created_at TEXT
+                )
+            """)
             cn.commit()
+
+            n = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            if n == 0:
+                # Seed Default-Admin
+                c.execute("""
+                    INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+                """, (
+                    "oklub",
+                    "admin@oklub.at",
+                    "OKlub",
+                    "Admin",
+                    hash_pw("OderKlub!"),   # Default-Passwort
+                    "Admin",
+                ))
+                cn.commit()
+                print("✅ Default-Admin 'oklub' wurde angelegt (Passwort: OderKlub!)")
+    except Exception as e:
+        print(f"⚠️ seed_admin_if_empty Fehler: {e}")
 
 def ensure_admin_consistency() -> None:
     """
