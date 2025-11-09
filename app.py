@@ -24,6 +24,26 @@ ensure_admin_consistency()
 setup_db()
 seed_admin_if_empty()
 
+# Versuche optional Admin-Konsistenz herzustellen, ohne App-Start zu blockieren
+try:
+    from core import auth as _authmod
+    # kleine, sichere Migration: Spalte 'status' anlegen, falls sie fehlt
+    try:
+        from core.db import conn
+        with conn() as _cn:
+            _c = _cn.cursor()
+            cols = {r[1] for r in _c.execute("PRAGMA table_info(users)").fetchall()}
+            if "status" not in cols:
+                _c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
+                _cn.commit()
+    except Exception:
+        pass
+
+    if hasattr(_authmod, "ensure_admin_consistency"):
+        _authmod.ensure_admin_consistency()
+except Exception:
+    # leise überspringen; Details stehen in den Streamlit-Logs
+    pass
 # ---------------- Dynamic Module Import (mit Hot Reload) ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
