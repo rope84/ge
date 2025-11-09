@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Tuple
 from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.config import APP_NAME, APP_VERSION
-from core import auth  # ⚠️ neu: für Pending-Registrierungen
+from core import auth  # für Pending-Registrierungen
 
 # Benutzer-UI (liegt in modules/admin/users_admin.py)
 from .users_admin import render_users_admin
@@ -38,7 +38,7 @@ def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
 
-        # --- USERS (ohne Rollenpflicht; functions-basiert) ---
+        # --- USERS (functions/status-basiert) ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +67,7 @@ def _ensure_tables():
         c.execute("UPDATE users SET status    = COALESCE(status,'active')")
         c.execute("UPDATE users SET created_at= COALESCE(created_at, datetime('now'))")
 
-        # --- FUNKTIONSKATALOG (Basis; Detailrechte pflegt users_admin) ---
+        # --- FUNKTIONSKATALOG (Basis) ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS functions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +75,6 @@ def _ensure_tables():
                 description TEXT
             )
         """)
-        # Seed nur, wenn leer
         have_funcs = c.execute("SELECT COUNT(*) FROM functions").fetchone()[0]
         if have_funcs == 0:
             defaults = [
@@ -166,9 +165,10 @@ def _ensure_version_logged():
 def _count_rows(table: str) -> int:
     with conn() as cn:
         c = cn.cursor()
-        if not _table_exists(c, table):
+        try:
+            return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        except Exception:
             return 0
-        return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 # ---------------- Backups ----------------
 def _list_backups() -> List[Path]:
@@ -251,164 +251,7 @@ def _card_html(title: str, color: str, lines: List[str]) -> str:
 def _pill(text: str, color: str = "#10b981") -> str:
     return f"<span style='background:{color}22; color:{color}; padding:2px 6px; border:1px solid {color}55; border-radius:999px; font-size:11px;'>{text}</span>"
 
-# ---------------- Übersicht ----------------
-def _render_home():
-    # Live-Zahlen
-    users_cnt = _count_rows("users")
-    fix_cnt   = _count_rows("fixcosts")
-    backups   = _list_backups()
-    total_backups = len(backups)
-
-    last_bkp_dt = _last_backup_time()
-    days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
-    bkp_color, bkp_label, bkp_tip = _status_badge_from_days(days_since)
-
-    db_size = _db_size_mb()
-    num_tables, total_rows = _db_table_stats()
-
-    # Betriebskennzahlen
-    last_inv = None
-    artikel_count = 0
-    einkauf_total = 0
-    umsatz_total = 0
-
-    with conn() as cn:
-        c = cn.cursor()
-
-        # Letzte Inventur
-        if _table_exists(c, "inventur"):
-            row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
-            last_inv = row[0] if row and row[0] else None
-
-        # Artikel
-        if _table_exists(c, "items"):
-            row = c.execute("SELECT COUNT(*) FROM items").fetchone()
-            artikel_count = row[0] if row and row[0] else 0
-            row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
-            einkauf_total = row[0] if row and row[0] else 0
-
-        # Umsätze
-        if _table_exists(c, "umsatz"):
-            row = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()
-            umsatz_total = row[0] if row and row[0] else 0
-
-    wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
-
-    last_inv_str = "—"
-    if last_inv:
-        try:
-            last_inv_str = datetime.datetime.fromisoformat(last_inv).strftime("%d.%m.%Y")
-        except Exception:
-            try:
-                last_inv_str = datetime.datetime.strptime(last_inv, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            except Exception:
-                last_inv_str = str(last_inv)
-
-    # Kapazität (Meta)
-    capacity_raw = _get_meta("business_capacity")
-    capacity_str = (capacity_raw if capacity_raw and capacity_raw.strip() else "—")
-
-    # Systemhinweise
-    system_issues = []
-    if users_cnt == 0:
-        system_issues.append("Keine Benutzer angelegt.")
-
-    system_color = "#22c55e" if not system_issues else "#f59e0b"
-
-    # 4 Karten
-    c1, c2, c3, c4 = st.columns(4, gap="large")
-
-    with c1:
-        today_str = datetime.date.today().strftime("%d.%m.%Y")
-        st.markdown(
-            _card_html(
-                "Systemstatus",
-                system_color,
-                [
-                    f"Prüfung: {today_str}",
-                    f"Benutzer: {users_cnt}",
-                    f"Fixkosten: {fix_cnt}",
-                ],
-            ),
-            unsafe_allow_html=True,
-        )
-
-    with c2:
-        last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
-        st.markdown(
-            _card_html(
-                "Backupstatus",
-                bkp_color,
-                [
-                    f"Status: {bkp_label}",
-                    f"Letztes Backup: {last_text}",
-                    f"Backups gesamt: {total_backups}",
-                ],
-            ),
-            unsafe_allow_html=True,
-        )
-
-    with c3:
-        st.markdown(
-            _card_html(
-                "Datenbank",
-                "#3b82f6",
-                [
-                    f"Größe: {db_size} MB",
-                    f"Tabellen: {num_tables}",
-                    f"Zeilen: {total_rows}",
-                    f"Backups: {total_backups}",
-                ],
-            ),
-            unsafe_allow_html=True,
-        )
-
-    with c4:
-        betriebs_lines = [
-            f"Letzte Inventur: {last_inv_str}",
-            f"Artikel: {artikel_count}",
-            f"Personalstand: {users_cnt}",
-            f"Kapazität: {capacity_str} Pers.",
-            f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
-        ]
-        st.markdown(
-            _card_html(
-                "Betriebsstatus",
-                "#f97316",
-                betriebs_lines,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    if system_issues:
-        with st.expander("🔍 Systemhinweise anzeigen", expanded=False):
-            for issue in system_issues:
-                st.markdown(f"- {issue}")
-
-    if bkp_color in ("#f59e0b", "#ef4444"):
-        with st.expander("🔍 Backup-Hinweise anzeigen", expanded=False):
-            st.markdown(f"- {bkp_tip}")
-
-    st.divider()
-
-    # --- Changelog ---
-    section_title("📝 Änderungsprotokoll")
-    with conn() as cn:
-        df = pd.read_sql(
-            "SELECT created_at, version, note FROM changelog "
-            "ORDER BY datetime(created_at) DESC LIMIT 20",
-            cn,
-        )
-    if df.empty:
-        st.info("Keine Einträge im Changelog.")
-    else:
-        for _, r in df.iterrows():
-            st.markdown(
-                f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
-                unsafe_allow_html=True,
-            )
-
-# ---------------- Pending-Registrierungen (NEU) ----------------
+# ---------------- Pending-Registrierungen (Unterpunkt) ----------------
 def _render_pending_registrations():
     section_title("👤 Ausstehende Registrierungen")
     pending = auth.list_pending_users()
@@ -416,7 +259,6 @@ def _render_pending_registrations():
         st.caption("Keine offenen Registrierungen.")
         return
 
-    # Optionale Schnellauswahl typischer Funktionen
     function_presets = [
         "Admin",
         "Betriebsleiter",
@@ -458,6 +300,126 @@ def _render_pending_registrations():
                     st.warning(msg if ok else f"Fehler: {msg}")
                     st.rerun()
 
+# ---------------- Übersicht ----------------
+def _render_home():
+    users_cnt = _count_rows("users")
+    fix_cnt   = _count_rows("fixcosts")
+    backups   = _list_backups()
+    total_backups = len(backups)
+
+    last_bkp_dt = _last_backup_time()
+    days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
+    bkp_color, bkp_label, bkp_tip = _status_badge_from_days(days_since)
+
+    db_size = _db_size_mb()
+    num_tables, total_rows = _db_table_stats()
+
+    # Pending Registrierungen (Badge für Übersicht)
+    pending_count = len(auth.list_pending_users())
+
+    # 4 Karten
+    c1, c2, c3, c4 = st.columns(4, gap="large")
+
+    with c1:
+        today_str = datetime.date.today().strftime("%d.%m.%Y")
+        lines = [
+            f"Prüfung: {today_str}",
+            f"Benutzer: {users_cnt}",
+            f"Fixkosten: {fix_cnt}",
+        ]
+        if pending_count > 0:
+            lines.append(f"⚠️ Offene Registrierungen: {pending_count}")
+        st.markdown(_card_html("Systemstatus", "#22c55e", lines), unsafe_allow_html=True)
+
+    with c2:
+        last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
+        st.markdown(
+            _card_html(
+                "Backupstatus",
+                bkp_color,
+                [
+                    f"Status: {bkp_label}",
+                    f"Letztes Backup: {last_text}",
+                    f"Backups gesamt: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with c3:
+        st.markdown(
+            _card_html(
+                "Datenbank",
+                "#3b82f6",
+                [
+                    f"Größe: {db_size} MB",
+                    f"Tabellen: {num_tables}",
+                    f"Zeilen: {total_rows}",
+                    f"Backups: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with c4:
+        # Betriebskennzahlen (sanft, da optional)
+        last_inv_str = "—"
+        artikel_count = 0
+        einkauf_total = 0
+        umsatz_total = 0
+        with conn() as cn:
+            c = cn.cursor()
+            if _table_exists(c, "inventur"):
+                row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
+                last_inv = row[0] if row and row[0] else None
+                if last_inv:
+                    try:
+                        last_inv_str = datetime.datetime.fromisoformat(last_inv).strftime("%d.%m.%Y")
+                    except Exception:
+                        try:
+                            last_inv_str = datetime.datetime.strptime(last_inv, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                        except Exception:
+                            last_inv_str = str(last_inv)
+            if _table_exists(c, "items"):
+                row = c.execute("SELECT COUNT(*) FROM items").fetchone()
+                artikel_count = row[0] if row and row[0] else 0
+                row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
+                einkauf_total = row[0] if row and row[0] else 0
+            if _table_exists(c, "umsatz"):
+                row = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()
+                umsatz_total = row[0] if row and row[0] else 0
+
+        wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
+        lines = [
+            f"Letzte Inventur: {last_inv_str}",
+            f"Artikel: {artikel_count}",
+            f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
+        ]
+        st.markdown(_card_html("Betriebsstatus", "#f97316", lines), unsafe_allow_html=True)
+
+    # Deutlicher Hinweis oben, solange pending > 0
+    if pending_count > 0:
+        st.info(f"Es liegen {pending_count} ausstehende Registrierungsanfrage(n) vor. Öffne **Benutzer → Registrierungen**, um diese zu prüfen.")
+
+    st.divider()
+
+    # --- Changelog ---
+    section_title("📝 Änderungsprotokoll")
+    with conn() as cn:
+        df = pd.read_sql(
+            "SELECT created_at, version, note FROM changelog "
+            "ORDER BY datetime(created_at) DESC LIMIT 20",
+            cn,
+        )
+    if df.empty:
+        st.info("Keine Einträge im Changelog.")
+    else:
+        for _, r in df.iterrows():
+            st.markdown(
+                f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
+                unsafe_allow_html=True,
+            )
+
 # ---------------- Betrieb (Grundparameter) ----------------
 def _render_business_admin():
     section_title("🏢 Grundparameter des Betriebs")
@@ -476,15 +438,11 @@ def _render_business_admin():
         "business_note",
     ]
 
-    # NEU: Einheiten-Zählwerte (mit kompatiblen Aliassen, falls früher anders benannt)
+    # Einheiten-Zählwerte (kompatible Aliasse)
     unit_keys = [
-        # Bars
         "bars_count", "business_bars", "num_bars",
-        # Kassen
         "registers_count", "business_registers", "num_registers", "kassen_count",
-        # Garderoben
         "cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count",
-        # Optional: Garderoben-Preise (falls im Abrechnungsteil verwendet)
         "conf_coat_price", "conf_bag_price",
     ]
 
@@ -511,7 +469,6 @@ def _render_business_admin():
         return default
 
     with st.form("business_form"):
-        # Stammdaten
         a, b = st.columns([2, 2])
         name = a.text_input("Name des Betriebs", value=values.get("business_name") or "")
         phone = b.text_input("Telefon", value=values.get("business_phone") or "")
@@ -536,8 +493,6 @@ def _render_business_admin():
         note = st.text_input("Notiz (optional)", value=values.get("business_note") or "")
 
         st.markdown("---")
-
-        # NEU: Einheiten-Konfiguration
         section_title("🧩 Einheiten für Abrechnung")
         u1, u2, u3 = st.columns(3)
 
@@ -557,7 +512,6 @@ def _render_business_admin():
             value=_first_int(["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"], 0)
         )
 
-        # Optional: Garderoben-Preise
         st.caption("Optional (nur falls im Abrechnungsteil benötigt)")
         p1, p2 = st.columns(2)
         conf_coat_price = p1.number_input(
@@ -570,7 +524,6 @@ def _render_business_admin():
         )
 
         if st.form_submit_button("💾 Speichern", use_container_width=True):
-            # Stammdaten speichern
             to_save = {
                 "business_name": name,
                 "business_street": street,
@@ -583,16 +536,12 @@ def _render_business_admin():
                 "business_capacity": str(capacity),
                 "business_note": note,
             }
-
-            # Einheiten unter allen relevanten Keys speichern (Kompatibilität)
             for k in ["bars_count", "business_bars", "num_bars"]:
                 to_save[k] = str(bars_count)
             for k in ["registers_count", "business_registers", "num_registers", "kassen_count"]:
                 to_save[k] = str(registers_count)
             for k in ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"]:
                 to_save[k] = str(cloakrooms_count)
-
-            # Optional: Preise
             to_save["conf_coat_price"] = str(conf_coat_price)
             to_save["conf_bag_price"]  = str(conf_bag_price)
 
@@ -636,7 +585,6 @@ def _render_fixcost_admin():
             with st.expander(f"{state_emoji} {name} – {amount:.2f} €", expanded=False):
                 st.markdown(_pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"), unsafe_allow_html=True)
                 st.write("")
-
                 c1, c2 = st.columns([2, 1])
                 e_name = c1.text_input("Bezeichnung", value=name, key=f"fc_name_{fid}")
                 e_amount = c2.number_input("Betrag (€)", value=float(amount or 0.0), step=10.0, key=f"fc_amount_{fid}")
@@ -663,22 +611,18 @@ def _render_fixcost_admin():
 # ---------------- Datenbank-Übersicht ----------------
 def _render_db_overview():
     section_title("🗂️ Datenbank – Übersicht & Export")
-
     with conn() as cn:
         c = cn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [r[0] for r in c.fetchall()]
-
     if not tables:
         st.info("Keine Tabellen vorhanden.")
         return
-
     selected_table = st.selectbox("Tabelle auswählen", tables)
     if selected_table:
         with conn() as cn:
             df = pd.read_sql(f"SELECT * FROM {selected_table}", cn)
         st.dataframe(df, use_container_width=True, height=420)
-
         csv = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
 
@@ -721,29 +665,29 @@ def _render_backup_admin():
 # ---------------- Haupt-Render ----------------
 def render_admin():
     """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
-    # Zugriffsschutz
     if st.session_state.get("role") != "admin":
         st.error("Kein Zugriff. Adminrechte erforderlich.")
         return
 
-    # Basis-Hooks
     _ensure_tables()
-    # Changelog optional beibehalten
     _ensure_version_logged()
 
     # Kopf
     page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    # Tabs
+    # Zähler für Pending-Registrierungen (Badge in Sub-Tab)
+    pending_count = len(auth.list_pending_users())
+    pending_label = "📝 Registrierungen" if pending_count == 0 else f"📝 Registrierungen ({pending_count})"
+
+    # Haupt-Tabs
     tabs = st.tabs([
-        "🏠 Übersicht",         # 0
-        "🏢 Betrieb",           # 1
-        "👤 Benutzer",          # 2
-        "📝 Registrierungen",   # 3  <-- NEU
-        "💰 Fixkosten",         # 4
-        "🗂️ Datenbank",        # 5
-        "📦 Daten",             # 6 (Import-Tools)
-        "💾 Backups",           # 7
+        "🏠 Übersicht",   # 0
+        "🏢 Betrieb",     # 1
+        "👤 Benutzer",    # 2 (mit Sub-Tabs)
+        "💰 Fixkosten",   # 3
+        "🗂️ Datenbank",  # 4
+        "📦 Daten",       # 5
+        "💾 Backups",     # 6
     ])
 
     with tabs[0]:
@@ -751,22 +695,24 @@ def render_admin():
     with tabs[1]:
         _render_business_admin()
     with tabs[2]:
-        render_users_admin()
+        # Sub-Tabs unter "Benutzer"
+        sub = st.tabs(["👥 Benutzerverwaltung", pending_label])
+        with sub[0]:
+            render_users_admin()
+        with sub[1]:
+            _render_pending_registrations()
     with tabs[3]:
-        _render_pending_registrations()
-    with tabs[4]:
         _render_fixcost_admin()
-    with tabs[5]:
+    with tabs[4]:
         _render_db_overview()
-    with tabs[6]:
+    with tabs[5]:
         try:
             from modules.import_items import render_data_tools
             render_data_tools()
         except Exception as e:
             st.error(f"Fehler beim Laden des Import-Tools: {e}")
-    with tabs[7]:
+    with tabs[6]:
         _render_backup_admin()
 
-    # Footer
     st.markdown("---")
     st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
