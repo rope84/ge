@@ -20,6 +20,45 @@ def verify_pw(pw: str, ph: str) -> bool:
     return hash_pw(pw) == (ph or "")
 
 # -----------------------------
+# Schema-Sicherung
+# -----------------------------
+def _ensure_user_schema() -> None:
+    """Stellt sicher, dass die users-Tabelle existiert und alle benötigten Spalten hat."""
+    with conn() as cn:
+        c = cn.cursor()
+        # Basistabelle
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT NOT NULL UNIQUE,
+                email      TEXT,
+                first_name TEXT,
+                last_name  TEXT,
+                passhash   TEXT NOT NULL DEFAULT '',
+                functions  TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT
+            )
+        """)
+        # Spalten nachziehen
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        def _add(col: str, ddl: str):
+            if col not in cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
+
+        _add("passhash",   "passhash   TEXT NOT NULL DEFAULT ''")
+        _add("functions",  "functions  TEXT DEFAULT ''")
+        _add("status",     "status     TEXT NOT NULL DEFAULT 'active'")
+        _add("created_at", "created_at TEXT")
+
+        # Nulls bereinigen
+        c.execute("UPDATE users SET passhash   = COALESCE(passhash,'')")
+        c.execute("UPDATE users SET functions  = COALESCE(functions,'')")
+        c.execute("UPDATE users SET status     = COALESCE(status,'active')")
+        c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
+        cn.commit()
+
+# -----------------------------
 # Role resolution (functions → role)
 # -----------------------------
 def _role_from_functions(functions: str) -> str:
@@ -27,6 +66,10 @@ def _role_from_functions(functions: str) -> str:
     if "admin" in funcs or "betriebsleiter" in funcs:
         return "admin"
     return "user"
+
+def is_admin_session() -> bool:
+    """Bequemer Helper für UI (Tabs, Badges …)."""
+    return (st.session_state.get("role") or "").lower() == "admin"
 
 # -----------------------------
 # User fetch / helpers
@@ -62,19 +105,18 @@ def _set_passhash(user_id: int, ph: str) -> None:
         cn.commit()
 
 # -----------------------------
-# Seed & consistency
+# Seed & Consistency
 # -----------------------------
-def seed_admin_if_empty():
-    """
-    Falls es noch keinen User gibt, einen Default-Admin anlegen.
-    """
+def seed_admin_if_empty() -> None:
+    """Falls noch kein User existiert, einen Default-Admin anlegen."""
+    _ensure_user_schema()
     with conn() as cn:
         c = cn.cursor()
         n = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if n == 0:
             c.execute("""
                 INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
-                VALUES(?,?,?,?,?,?,?,datetime('now'))
+                VALUES(?,?,?,?,?,?,?, datetime('now'))
             """, (
                 "oklub",
                 "admin@oklub.at",
@@ -88,63 +130,21 @@ def seed_admin_if_empty():
 
 def ensure_admin_consistency() -> None:
     """
-    Stellt sicher, dass:
-      - Tabelle users existiert (Schema minimal),
-      - Spalten 'functions' und 'status' vorhanden sind,
-      - mind. ein Admin existiert (Seed 'oklub' falls nötig).
-    Läuft idempotent und darf beliebig oft aufgerufen werden.
+    - Schema sicherstellen
+    - mindestens einen aktiven Admin/Betriebsleiter garantieren
+    - 'oklub' seeden/auffrischen falls nötig
     """
-    from core.db import conn  # local import, um Zyklen zu vermeiden
-
+    _ensure_user_schema()
     with conn() as cn:
         c = cn.cursor()
-
-        # 1) Tabelle users sicherstellen (minimal – vorhandene Felder bleiben erhalten)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username   TEXT NOT NULL UNIQUE,
-                email      TEXT,
-                first_name TEXT,
-                last_name  TEXT,
-                passhash   TEXT NOT NULL DEFAULT '',
-                functions  TEXT DEFAULT '',
-                status     TEXT DEFAULT 'active',
-                created_at TEXT
-            )
-        """)
-
-        # 2) Fehlende Spalten dynamisch ergänzen
-        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
-        if "functions" not in cols:
-            c.execute("ALTER TABLE users ADD COLUMN functions TEXT DEFAULT ''")
-        if "passhash" not in cols:
-            c.execute("ALTER TABLE users ADD COLUMN passhash TEXT NOT NULL DEFAULT ''")
-        if "status" not in cols:
-            c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
-        if "created_at" not in cols:
-            c.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
-
-        # 3) Null-Werte glätten
-        c.execute("UPDATE users SET passhash = COALESCE(passhash,'')")
-        c.execute("UPDATE users SET functions = COALESCE(functions,'')")
-        c.execute("UPDATE users SET status    = COALESCE(status,'active')")
-        c.execute("UPDATE users SET created_at= COALESCE(created_at, datetime('now'))")
-
-        # 4) Existiert ein Admin? (Admin ODER Betriebsleiter zählt)
         have_admin = c.execute("""
             SELECT 1
               FROM users
-             WHERE status='active'
-               AND (
-                    lower(functions) LIKE '%admin%'
-                 OR lower(functions) LIKE '%betriebsleiter%'
-               )
+             WHERE LOWER(COALESCE(status,'active'))='active'
+               AND (lower(functions) LIKE '%admin%' OR lower(functions) LIKE '%betriebsleiter%')
              LIMIT 1
         """).fetchone()
-
         if not have_admin:
-            # fallback-seed "oklub" als Admin – falls nicht vorhanden
             row = c.execute("SELECT id, passhash FROM users WHERE username=?", ("oklub",)).fetchone()
             if row is None:
                 c.execute("""
@@ -160,12 +160,9 @@ def ensure_admin_consistency() -> None:
                 ))
             else:
                 uid, ph = row
-                # Rolle admin sicherstellen
-                c.execute("UPDATE users SET functions=? WHERE id=?", ("Admin", uid))
-                # Falls leer, default Passwort setzen (nur wenn wirklich leer)
+                c.execute("UPDATE users SET functions='Admin', status='active' WHERE id=?", (uid,))
                 if not ph:
                     c.execute("UPDATE users SET passhash=? WHERE id=?", (hash_pw("OderKlub!"), uid))
-
         cn.commit()
 
 # -----------------------------
@@ -178,14 +175,13 @@ def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     - role: 'admin'|'user' (nur wenn ok=True)
     - functions: originaler Functions-String (nur wenn ok=True)
     """
+    _ensure_user_schema()
     u = _fetch_user(user)
     if not u:
         return (False, None, None)
 
     # Status prüfen
-    status = (u["status"] or "active").lower()
-    if status != "active":
-        # Pending / disabled -> kein Login
+    if (u["status"] or "active").lower() != "active":
         return (False, None, None)
 
     # First Login: wenn kein passhash gesetzt, jetzt setzen (nur wenn pw geliefert)
@@ -220,6 +216,8 @@ def register_user(username: str, first_name: str, last_name: str, email: str, pa
     Legt einen Benutzer mit status='pending' an.
     Passwort wird bereits gehasht gespeichert; Login ist bis Freigabe blockiert.
     """
+    _ensure_user_schema()
+
     if not username or not email or not first_name or not last_name or not password:
         return False, "Bitte alle Felder ausfüllen."
     if not PWD_PATTERN.match(password):
@@ -232,7 +230,7 @@ def register_user(username: str, first_name: str, last_name: str, email: str, pa
             return False, "Benutzername ist bereits vergeben."
         c.execute("""
             INSERT INTO users(username, email, first_name, last_name, passhash, functions, status, created_at)
-            VALUES(?,?,?,?,?,?,?,datetime('now'))
+            VALUES(?,?,?,?,?,?,?, datetime('now'))
         """, (
             username.strip(),
             email.strip(),
@@ -249,6 +247,7 @@ def register_user(username: str, first_name: str, last_name: str, email: str, pa
 # Admin: pending queue
 # -----------------------------
 def list_pending_users() -> List[Dict]:
+    _ensure_user_schema()
     with conn() as cn:
         c = cn.cursor()
         rows = c.execute("""
@@ -268,7 +267,19 @@ def list_pending_users() -> List[Dict]:
         })
     return out
 
+def pending_count() -> int:
+    """Anzahl offener Registrierungen (für Badge/Übersicht)."""
+    _ensure_user_schema()
+    with conn() as cn:
+        c = cn.cursor()
+        n = c.execute("""
+            SELECT COUNT(*) FROM users
+             WHERE LOWER(COALESCE(status,'active'))='pending'
+        """).fetchone()[0]
+    return int(n or 0)
+
 def approve_user(username: str, functions: str) -> Tuple[bool, str]:
+    _ensure_user_schema()
     if not username:
         return False, "Kein Benutzername übergeben."
     fn = (functions or "").strip()
@@ -287,6 +298,7 @@ def approve_user(username: str, functions: str) -> Tuple[bool, str]:
     return True, f"Benutzer '{username}' freigegeben."
 
 def reject_user(username: str) -> Tuple[bool, str]:
+    _ensure_user_schema()
     if not username:
         return False, "Kein Benutzername übergeben."
     with conn() as cn:
@@ -302,7 +314,7 @@ def reject_user(username: str) -> Tuple[bool, str]:
 # Password management
 # -----------------------------
 def change_password(username: str, old_pw: str, new_pw: str) -> tuple[bool, str]:
-    """Von Nutzer aufgerufen (Profil)."""
+    _ensure_user_schema()
     if not PWD_PATTERN.match(new_pw):
         return False, "Passwort zu schwach (min. 6, 1 Großbuchstabe, 1 Sonderzeichen)."
     with conn() as cn:
@@ -317,7 +329,7 @@ def change_password(username: str, old_pw: str, new_pw: str) -> tuple[bool, str]
     return True, "Passwort aktualisiert."
 
 def admin_set_password(username: str, new_pw: str) -> tuple[bool, str]:
-    """Admin setzt fremdes Passwort."""
+    _ensure_user_schema()
     if not PWD_PATTERN.match(new_pw):
         return False, "Passwort zu schwach (min. 6, 1 Großbuchstabe, 1 Sonderzeichen)."
     with conn() as cn:
