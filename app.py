@@ -1,19 +1,37 @@
 # app.py
 import streamlit as st
 import traceback
-import importlib, inspect, datetime
+import importlib, inspect, datetime, sys
 from pathlib import Path
 
+# --- robuste Paketpfad-Absicherung (falls Streamlit/Cloud den CWD ändert)
+ROOT = Path(__file__).parent.resolve()
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# --- Core-Module robust importieren
 from core.db import setup_db
-from core import auth                              # <-- wichtig, damit _do_login existiert
-from core.auth import ensure_admin_consistency     # konsolidierter Seed & Migrations-Check
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
-# ---------------- Initial Setup ----------------
-setup_db()                    # DB-Struktur sicherstellen
-ensure_admin_consistency()    # Users-Tabelle/Spalten/Default-Admin konsistent halten
+# Versuch 1: normales Paket-Import
+try:
+    from core import auth
+except Exception:
+    # Fallback: direktes Modul laden
+    auth = importlib.import_module("core.auth")
+
+# ---------------- Initial Setup (einmal, in korrekter Reihenfolge) ----------------
+setup_db()                           # 1) DB-Struktur (generisch) anlegen
+try:
+    auth.ensure_admin_consistency()  # 2) users-Tabelle/Spalten sicherstellen (status, functions, etc.)
+except Exception:
+    pass
+try:
+    auth.seed_admin_if_empty()       # 3) Admin-Seed nur wenn keine User existieren
+except Exception:
+    pass
 
 # ---------------- Dynamic Module Import (mit Hot Reload) ----------------
 def import_modules():
@@ -66,45 +84,43 @@ def logout():
 
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
-    if not pressed:
-        return
+    if pressed:
+        if not u or not p:
+            st.error("Bitte Benutzername und Passwort eingeben.")
+            return
 
-    if not u or not p:
-        st.error("Bitte Benutzername und Passwort eingeben.")
-        return
+        # Debug-Hinweis zum DB-Zustand des Users (sichtbar, hilft bei Status/Passhash)
+        try:
+            from core.db import conn
+            with conn() as cn:
+                c = cn.cursor()
+                row = c.execute(
+                    "SELECT username, COALESCE(status,'active') AS status, "
+                    "COALESCE(functions,'') AS functions, LENGTH(COALESCE(passhash,'')) AS pass_len "
+                    "FROM users WHERE username=?",
+                    (u.strip(),)
+                ).fetchone()
+            if row:
+                st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
+            else:
+                st.caption("Debug · Benutzer in DB nicht gefunden.")
+        except Exception as e:
+            st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
 
-    # Optional: kurzer Sicht-Check des DB-Zustands
-    try:
-        from core.db import conn
-        with conn() as cn:
-            c = cn.cursor()
-            row = c.execute(
-                "SELECT username, COALESCE(status,'active') AS status, "
-                "COALESCE(functions,'') AS functions, LENGTH(COALESCE(passhash,'')) AS pass_len "
-                "FROM users WHERE username=?",
-                (u.strip(),)
-            ).fetchone()
-        if row:
-            st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
+        # Eigentlicher Login
+        try:
+            ok, role, _func = auth._do_login(u, p)
+        except Exception as e:
+            st.error("Login-Fehler (interner Ausnahmefehler).")
+            st.exception(e)
+            return
+
+        if ok:
+            if not st.session_state.get("role"):
+                st.session_state["role"] = role or "user"
+            st.rerun()
         else:
-            st.caption("Debug · Benutzer in DB nicht gefunden.")
-    except Exception as e:
-        st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
-
-    # Login
-    try:
-        ok, role, _functions = auth._do_login(u, p)
-    except Exception as e:
-        st.error("Login-Fehler. Siehe Logs/Konsole.")
-        st.exception(e)
-        return
-
-    if ok:
-        if not st.session_state.get("role"):
-            st.session_state["role"] = role or "user"
-        st.rerun()
-    else:
-        st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
+            st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
 
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
