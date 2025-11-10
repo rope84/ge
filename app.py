@@ -1,39 +1,27 @@
 # app.py
 import streamlit as st
 import traceback
-import importlib, inspect, datetime, sys
+import importlib, inspect, datetime
 from pathlib import Path
 
-# --- robuste Paketpfad-Absicherung (falls Streamlit/Cloud den CWD ändert)
-ROOT = Path(__file__).parent.resolve()
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# --- Core-Module robust importieren
-from core.db import setup_db
+from core.db import setup_db, conn
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
-# Versuch 1: normales Paket-Import
-try:
-    from core import auth
-except Exception:
-    # Fallback: direktes Modul laden
-    auth = importlib.import_module("core.auth")
+# ---------------- Initial Setup ----------------
+setup_db()  # DB-Datei + Basis vorhanden
 
-# ---------------- Initial Setup (einmal, in korrekter Reihenfolge) ----------------
-setup_db()                           # 1) DB-Struktur (generisch) anlegen
+# ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
 try:
-    auth.ensure_admin_consistency()  # 2) users-Tabelle/Spalten sicherstellen (status, functions, etc.)
+    auth_mod = importlib.import_module("core.auth")  # nicht am Top-Level weiterverwenden
+    if hasattr(auth_mod, "ensure_admin_consistency"):
+        auth_mod.ensure_admin_consistency()
 except Exception:
-    pass
-try:
-    auth.seed_admin_if_empty()       # 3) Admin-Seed nur wenn keine User existieren
-except Exception:
+    # nicht blockieren – Details stehen im Streamlit-Log
     pass
 
-# ---------------- Dynamic Module Import (mit Hot Reload) ----------------
+# ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
 
@@ -42,7 +30,7 @@ def import_modules():
         try:
             mod = importlib.import_module(qualified_name)
             mod = importlib.reload(mod)
-            fn = getattr(mod, f"render_{base}")  # z. B. render_start()
+            fn = getattr(mod, f"render_{base}")  # z.B. render_start()
             modules[base] = fn
 
             file_path = Path(inspect.getfile(mod))
@@ -82,45 +70,51 @@ def logout():
     init_session()
     st.rerun()
 
+def _lazy_auth():
+    """core.auth erst laden, wenn wirklich gebraucht (verhindert Zyklen)."""
+    return importlib.import_module("core.auth")
+
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
-    if pressed:
-        if not u or not p:
-            st.error("Bitte Benutzername und Passwort eingeben.")
-            return
+    if not pressed:
+        return
 
-        # Debug-Hinweis zum DB-Zustand des Users (sichtbar, hilft bei Status/Passhash)
-        try:
-            from core.db import conn
-            with conn() as cn:
-                c = cn.cursor()
-                row = c.execute(
-                    "SELECT username, COALESCE(status,'active') AS status, "
-                    "COALESCE(functions,'') AS functions, LENGTH(COALESCE(passhash,'')) AS pass_len "
-                    "FROM users WHERE username=?",
-                    (u.strip(),)
-                ).fetchone()
-            if row:
-                st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
-            else:
-                st.caption("Debug · Benutzer in DB nicht gefunden.")
-        except Exception as e:
-            st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
+    if not u or not p:
+        st.error("Bitte Benutzername und Passwort eingeben.")
+        return
 
-        # Eigentlicher Login
-        try:
-            ok, role, _func = auth._do_login(u, p)
-        except Exception as e:
-            st.error("Login-Fehler (interner Ausnahmefehler).")
-            st.exception(e)
-            return
-
-        if ok:
-            if not st.session_state.get("role"):
-                st.session_state["role"] = role or "user"
-            st.rerun()
+    # Sichtbarer Mini-Diagnoseblock
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            row = c.execute(
+                "SELECT username, COALESCE(status,'active'), COALESCE(functions,''), LENGTH(COALESCE(passhash,'')) "
+                "FROM users WHERE username=?",
+                (u.strip(),)
+            ).fetchone()
+        if row:
+            st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
         else:
-            st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
+            st.caption("Debug · Benutzer in DB nicht gefunden.")
+    except Exception as e:
+        st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
+
+    # Eigentliche Anmeldung
+    try:
+        auth = _lazy_auth()
+        ok, role, _scope = auth._do_login(u, p)  # (ok, role, functions)
+    except Exception as e:
+        st.error("Login-Fehler (interner Ausnahmefehler).")
+        st.exception(e)
+        return
+
+    if ok:
+        # Falls core.auth noch keine Rolle gesetzt hat, Standard setzen
+        if not st.session_state.get("role"):
+            st.session_state["role"] = role or "user"
+        st.rerun()
+    else:
+        st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
 
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
@@ -230,7 +224,9 @@ def route():
     try:
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
-        elif mod_key in ("cashflow", "dashboard"):
+        elif mod_key == "cashflow":
+            mod_func()
+        elif mod_key == "dashboard":
             mod_func()
         elif mod_key == "inventur":
             try:
