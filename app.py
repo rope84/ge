@@ -17,9 +17,12 @@ try:
     auth_mod = importlib.import_module("core.auth")
     if hasattr(auth_mod, "ensure_admin_consistency"):
         auth_mod.ensure_admin_consistency()
+    if hasattr(auth_mod, "seed_admin_if_empty"):
+        auth_mod.seed_admin_if_empty()
 except Exception:
-    # App nicht blockieren – Details im Streamlit-Log
+    # nicht blockieren – Details stehen im Streamlit-Log
     pass
+
 
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
@@ -87,19 +90,18 @@ def login_screen():
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
 
-    # kleiner Diagnose-Block
+    # Sichtbarer Mini-Diagnoseblock
     try:
         with conn() as cn:
             c = cn.cursor()
             row = c.execute(
                 """
                 SELECT username,
-                       COALESCE(status,'active') AS status,
-                       COALESCE(functions,'') AS functions,
-                       LENGTH(COALESCE(passhash,'')) AS pass_len
-                  FROM users
-                 WHERE username=?
-            """,
+                       COALESCE(status,'active'),
+                       COALESCE(functions,''),
+                       LENGTH(COALESCE(passhash,'')) 
+                  FROM users WHERE username=?
+                """,
                 (u.strip(),),
             ).fetchone()
         if row:
@@ -112,10 +114,10 @@ def login_screen():
     except Exception as e:
         st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
 
-    # eigentlicher Login
+    # Eigentliche Anmeldung
     try:
         auth = _lazy_auth()
-        ok, role, _scope = auth._do_login(u, p)
+        ok, role, _scope = auth._do_login(u, p)  # (ok, role, functions)
     except Exception as e:
         st.error("Login-Fehler (interner Ausnahmefehler).")
         st.exception(e)
@@ -127,6 +129,7 @@ def login_screen():
         st.rerun()
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
+
 
 # ---------------- Fixed Footer ----------------
 def fixed_footer():
@@ -160,14 +163,13 @@ def fixed_footer():
 
         <div class="footer">
             👤 {st.session_state.get('username', 'Gast')}<br>
-            Rechte: <span style='opacity:0.8'>
-                {st.session_state.get('role', 'guest')}
-            </span><br>
+            Rechte: <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
 
 # ---------------- Sidebar ----------------
 def sidebar():
@@ -197,16 +199,21 @@ def sidebar():
         st.radio(
             "Navigation",
             display_pages,
-            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
+            index=display_pages.index(
+                st.session_state.get("nav_choice", "Start")
+            ),
             label_visibility="collapsed",
             key="nav_choice",
         )
 
         st.divider()
-        if st.session_state.auth and st.button("Logout", use_container_width=True):
+        if st.session_state.auth and st.button(
+            "Logout", use_container_width=True
+        ):
             logout()
 
         fixed_footer()
+
 
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
@@ -265,6 +272,7 @@ def route():
     except Exception:
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
+
 
 # ---------------- Main ----------------
 def main():
