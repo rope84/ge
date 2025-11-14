@@ -38,15 +38,11 @@ def _get_business_name() -> str:
 # LOGIN-FORMULAR
 # ----------------------------------------------------------
 def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
-    """
-    Zeichnet das Login-UI.
-    Rückgabe: (username, password, pressed_login)
-    """
 
     club_name = _get_business_name()
 
     # ------------------------------------------------------
-    # GLOBAL STYLES (Zentriert, Glass, Pille killen)
+    # GLOBAL STYLES
     # ------------------------------------------------------
     st.markdown(
         f"""
@@ -62,7 +58,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
                         #020617;
         }}
 
-        /* Hauptcontainer zentrieren */
+        /* Hauptcontainer zentriert */
         [data-testid="block-container"] {{
             max-width: 900px !important;
             margin: 0 auto !important;
@@ -72,7 +68,6 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             align-items: center;
         }}
 
-        /* Überschrift zentriert */
         .ge-title {{
             font-size: 1.9rem;
             font-weight: 700;
@@ -80,6 +75,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             margin-bottom: 4px;
             text-align: center;
         }}
+
         .ge-sub {{
             font-size: .95rem;
             opacity: .8;
@@ -87,6 +83,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             margin-bottom: 4px;
             color: #e5e7eb;
         }}
+
         .ge-mini {{
             font-size: .8rem;
             opacity: .55;
@@ -94,7 +91,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             margin-bottom: 22px;
         }}
 
-        /* PILLE / Hero-Balken sicher killen */
+        /* PILLE KILLEN */
         div[style*="linear-gradient"][style*="999px"],
         div[style*="linear-gradient"][style*="border-radius: 999px"],
         div[style*="linear-gradient"][style*="border-radius:999px"] {{
@@ -111,7 +108,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             box-shadow: none !important;
         }}
 
-        /* Blaue Glass-Card innerhalb des Forms */
+        /* Blaue Glass-Card */
         [data-testid="stForm"] > div:first-child {{
             background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(37,99,235,0.88)) !important;
             border-radius: 24px !important;
@@ -123,16 +120,11 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             margin: 0 !important;
         }}
 
-        /* Expander-Header etwas hübscher */
         .streamlit-expanderHeader {{
             font-size: 0.95rem !important;
             color: #e5e7eb !important;
         }}
-        .streamlit-expanderHeader:hover {{
-            color: #ffffff !important;
-        }}
 
-        /* Footer */
         .ge-footer {{
             text-align: center;
             opacity: .65;
@@ -140,7 +132,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             margin-top: 18px;
         }}
 
-        /* Streamlit-Toolbar + Badges ausblenden */
+        /* Streamlit-Toolbar + Badges killen */
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stCloudAppStatus"],
@@ -159,7 +151,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
     )
 
     # ------------------------------------------------------
-    # HEADER (Clubname + Unterzeilen)
+    # HEADER
     # ------------------------------------------------------
     st.markdown(
         f"""
@@ -171,9 +163,10 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
     )
 
     # ------------------------------------------------------
-    # LOGIN FORM (Glass-Card durch CSS)
+    # LOGIN FORM – OHNE PASSWORT-ANZEIGE
     # ------------------------------------------------------
     with st.form("ge_login_form", clear_on_submit=False):
+
         username = st.text_input("Benutzername", placeholder="username", key="ge_user")
 
         password = st.text_input(
@@ -182,17 +175,12 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             placeholder="••••••••",
             key="ge_pass",
         )
-        show_pw = st.checkbox("Passwort anzeigen", key="ge_showpw")
-
-        if show_pw:
-            st.info("Passwort-Anzeige aktiviert.")
-            st.text_input("Passwort (sichtbar)", value=password, type="default", key="ge_pw_visible")
 
         st.caption("Hinweis: Mind. 6 Zeichen, 1 Großbuchstabe, 1 Sonderzeichen.")
         pressed_login = st.form_submit_button("Einloggen", use_container_width=True)
 
     # ------------------------------------------------------
-    # REGISTRIERUNG (gleiche Glass-Optik, eigenes Form)
+    # REGISTRIERUNG (Glass-Optik)
     # ------------------------------------------------------
     with st.expander("Noch kein Konto? Jetzt registrieren", expanded=False):
         with st.form("ge_register_form", clear_on_submit=True):
@@ -218,7 +206,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
                     else:
                         st.error(msg)
                 except Exception as e:
-                    st.error("Registrierung fehlgeschlagen (interner Fehler).")
+                    st.error("Registrierung fehlgeschlagen.")
                     st.exception(e)
 
     # ------------------------------------------------------
