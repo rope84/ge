@@ -1,297 +1,626 @@
-# inventur.py
-import os, io, re
-from datetime import datetime, date
-from contextlib import closing
-import pandas as pd
+# modules/inventur.py
 import streamlit as st
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+import pandas as pd
+import datetime
+from typing import List, Dict, Any, Optional
+
 from core.db import conn
-from core.ui_theme import page_header, section_title, metric_card
-from core.config import APP_NAME, APP_VERSION
-
-EXCEL_PATH = "versuch3.xlsx"
-EXPORT_DIR = "exports"
-MONTHS = ["Jänner", "Februar", "März", "April", "Mai", "Juni",
-          "Juli", "August", "September", "Oktober", "November", "Dezember"]
-
-# ----------------------------------------------------------
-# Hilfsfunktionen
-# ----------------------------------------------------------
-
-def ensure_export_dir():
-    os.makedirs(EXPORT_DIR, exist_ok=True)
 
 
-def items_exist():
-    with closing(conn()) as c:
-        return c.execute("SELECT COUNT(*) FROM inventur_items").fetchone()[0] > 0
+# ------------------------------------------------------------
+# DB-Hilfsfunktionen
+# ------------------------------------------------------------
+
+def _table_exists(cur, name: str) -> bool:
+    row = cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone()
+    return row is not None
 
 
-def _norm_colname(s: str) -> str:
-    s = str(s or "").strip().lower()
-    s = re.sub(r"\s+", " ", s)
-    return s
+def _ensure_inventur_schema() -> None:
+    """
+    Stellt sicher, dass die Tabellen 'inventur' und 'inventur_items'
+    mit allen benötigten Spalten existieren. Läuft idempotent.
+    """
+    with conn() as cn:
+        c = cn.cursor()
+
+        # --- inventur (Kopf) ---
+        if not _table_exists(c, "inventur"):
+            c.execute(
+                """
+                CREATE TABLE inventur (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    month       TEXT NOT NULL,              -- 'YYYY-MM'
+                    created_at  TEXT NOT NULL,
+                    created_by  TEXT,
+                    status      TEXT NOT NULL,              -- draft|submitted|approved|rejected
+                    reviewed_at TEXT,
+                    reviewed_by TEXT,
+                    note        TEXT
+                )
+                """
+            )
+        else:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(inventur)").fetchall()}
+
+            def add_if_missing(col: str, ddl: str) -> None:
+                if col not in cols:
+                    c.execute(f"ALTER TABLE inventur ADD COLUMN {ddl}")
+
+            add_if_missing("month",       "month       TEXT")
+            add_if_missing("created_at",  "created_at  TEXT")
+            add_if_missing("created_by",  "created_by  TEXT")
+            add_if_missing("status",      "status      TEXT DEFAULT 'draft'")
+            add_if_missing("reviewed_at", "reviewed_at TEXT")
+            add_if_missing("reviewed_by", "reviewed_by TEXT")
+            add_if_missing("note",        "note        TEXT")
+
+        # --- inventur_items (Details) ---
+        if not _table_exists(c, "inventur_items"):
+            c.execute(
+                """
+                CREATE TABLE inventur_items (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inventur_id  INTEGER NOT NULL,
+                    item_id      INTEGER NOT NULL,
+                    counted_qty  REAL NOT NULL DEFAULT 0,
+                    purchase_price REAL,
+                    total_value  REAL,
+                    FOREIGN KEY(inventur_id) REFERENCES inventur(id)
+                )
+                """
+            )
+        else:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(inventur_items)").fetchall()}
+
+            def add_if_missing(col: str, ddl: str) -> None:
+                if col not in cols:
+                    c.execute(f"ALTER TABLE inventur_items ADD COLUMN {ddl}")
+
+            add_if_missing("counted_qty",   "counted_qty   REAL NOT NULL DEFAULT 0")
+            add_if_missing("purchase_price","purchase_price REAL")
+            add_if_missing("total_value",   "total_value   REAL")
+
+        # --- audit_log (für Änderungen) ---
+        if not _table_exists(c, "audit_log"):
+            c.execute(
+                """
+                CREATE TABLE audit_log (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts      TEXT NOT NULL,
+                    user    TEXT,
+                    action  TEXT,
+                    details TEXT
+                )
+                """
+            )
+
+        cn.commit()
 
 
-def _coerce_num(x):
-    if pd.isna(x):
-        return 0.0
-    if isinstance(x, (int, float)):
-        return float(x)
-    s = str(x).strip().replace(".", "").replace(",", ".")
+def _log(user: str, action: str, details: str) -> None:
     try:
-        return float(s)
+        with conn() as cn:
+            c = cn.cursor()
+            c.execute(
+                "INSERT INTO audit_log(ts, user, action, details) VALUES(?,?,?,?)",
+                (
+                    datetime.datetime.utcnow().isoformat(timespec="seconds"),
+                    user or "",
+                    action,
+                    details,
+                ),
+            )
+            cn.commit()
     except Exception:
-        return 0.0
+        # Logging darf niemals die App zerlegen
+        pass
 
 
-def import_excel_once_if_empty():
-    """Importiert Artikelliste einmalig aus Excel, falls DB leer."""
-    if items_exist() or not os.path.exists(EXCEL_PATH):
-        return
+# ------------------------------------------------------------
+# Helper: Rechte / User-Infos
+# ------------------------------------------------------------
 
-    df = pd.read_excel(EXCEL_PATH, header=None)
-    first_row = df.iloc[0].astype(str).str.lower().tolist()
-    looks_like_header = any(k in " ".join(first_row)
-                            for k in ["artikel", "ep", "netto", "stand", "kategorie"])
-    if looks_like_header:
-        df = pd.read_excel(EXCEL_PATH, header=0)
-
-    cols_map = {c: _norm_colname(c) for c in df.columns}
-    inv = {}
-    for raw, norm in cols_map.items():
-        if "kat" in norm:
-            inv["kategorie"] = raw
-        elif "artikel" in norm or "bezeichnung" in norm:
-            inv["artikel"] = raw
-        elif "stand" in norm or "bestand" in norm:
-            inv["stand"] = raw
-        elif "ep netto" in norm or ("ep" in norm and "netto" in norm):
-            inv["ep_netto"] = raw
-
-    if "artikel" not in inv:
-        inv["artikel"] = df.columns[1]
-    if "stand" not in inv:
-        for c in df.columns:
-            if df[c].astype(str).str.contains(r"\d").any():
-                inv["stand"] = c
-                break
-    if "ep_netto" not in inv:
-        inv["ep_netto"] = df.columns[-1]
-    if "kategorie" not in inv:
-        inv["kategorie"] = None
-
-    use_cols = [inv[k] for k in inv if inv[k] in df.columns and inv[k] is not None]
-    df2 = df[use_cols].copy()
-
-    rename_map = {}
-    if inv.get("kategorie") in df2.columns:
-        rename_map[inv["kategorie"]] = "kategorie"
-    rename_map[inv["artikel"]] = "artikel"
-    rename_map[inv["stand"]] = "stand"
-    rename_map[inv["ep_netto"]] = "ep_netto"
-    df2 = df2.rename(columns=rename_map)
-
-    df2["artikel"] = df2["artikel"].astype(str).str.strip()
-    df2 = df2[df2["artikel"].str.len() > 0]
-    df2["stand"] = df2["stand"].apply(_coerce_num)
-    df2["ep_netto"] = df2["ep_netto"].apply(_coerce_num)
-    if "kategorie" not in df2.columns:
-        df2["kategorie"] = ""
-
-    yy, mm = date.today().year, date.today().month
-    now = datetime.now().isoformat()
-    rows = [(yy, mm, str(r.get("kategorie", "")), str(r["artikel"]),
-             float(r["ep_netto"]), float(r["stand"]), 0.0, "System", now)
-            for _, r in df2.iterrows()]
-
-    with closing(conn()) as c:
-        c.executemany("""
-            INSERT INTO inventur_items
-            (jahr,monat,kategorie,artikel,ep_netto,stand_vormonat,stand_aktuell,last_user,last_modified)
-            VALUES(?,?,?,?,?,?,?,?,?)
-        """, rows)
-        c.commit()
+def _current_user() -> str:
+    return (st.session_state.get("username") or "").strip() or "unknown"
 
 
-def load_inventory(year: int, month: int) -> pd.DataFrame:
-    with closing(conn()) as c:
-        df = pd.read_sql_query("""
-            SELECT * FROM inventur_items
-            WHERE jahr=? AND monat=?
-            ORDER BY kategorie, artikel
-        """, c, params=(year, month))
+def _current_functions() -> str:
+    return st.session_state.get("scope") or ""
+
+
+def _is_admin() -> bool:
+    role = (st.session_state.get("role") or "").lower()
+    if role == "admin":
+        return True
+    funcs = [f.strip().lower() for f in _current_functions().split(",") if f.strip()]
+    return ("admin" in funcs) or ("betriebsleiter" in funcs)
+
+
+def _has_inventur_right() -> bool:
+    if _is_admin():
+        return True
+    funcs = [f.strip().lower() for f in _current_functions().split(",") if f.strip()]
+    return "inventur" in funcs
+
+
+# ------------------------------------------------------------
+# Helper: Artikel & Inventur-Daten
+# ------------------------------------------------------------
+
+def _load_items() -> pd.DataFrame:
+    """
+    Lädt Artikel aus der items-Tabelle.
+    Versucht, gängige Spalten zu verwenden, ist aber robust bei älteren Schemas.
+    Erwartete Spalten, wenn vorhanden:
+      - id (Pflicht)
+      - name / artikelname
+      - unit / einheit
+      - purchase_price / einkaufspreis
+      - is_active
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        # Schema ermitteln
+        cols = [r[1] for r in c.execute("PRAGMA table_info(items)").fetchall()]
+        if "id" not in cols:
+            return pd.DataFrame()
+
+        # Dynamisch Select-List bauen
+        select_cols = ["id"]
+        name_col = "name" if "name" in cols else ("artikelname" if "artikelname" in cols else None)
+        if name_col:
+            select_cols.append(f"{name_col} AS name")
+        unit_col = "unit" if "unit" in cols else ("einheit" if "einheit" in cols else None)
+        if unit_col:
+            select_cols.append(f"{unit_col} AS unit")
+        price_col = "purchase_price" if "purchase_price" in cols else ("einkaufspreis" if "einkaufspreis" in cols else None)
+        if price_col:
+            select_cols.append(f"{price_col} AS purchase_price")
+        if "is_active" in cols:
+            select_cols.append("is_active")
+
+        sql = "SELECT " + ", ".join(select_cols) + " FROM items"
+        if "is_active" in cols:
+            sql += " WHERE COALESCE(is_active,1)=1"
+
+        df = pd.read_sql(sql, cn)
+        if "name" not in df.columns:
+            df["name"] = "(ohne Name)"
+        if "unit" not in df.columns:
+            df["unit"] = ""
+        if "purchase_price" not in df.columns:
+            df["purchase_price"] = 0.0
+        return df
+
+
+def _get_or_create_current_inventur(user: str) -> Dict[str, Any]:
+    """
+    Liefert den Inventur-Kopfdatensatz für den aktuellen Monat (YYYY-MM).
+    Legt bei Bedarf einen neuen mit status='draft' an.
+    """
+    now = datetime.date.today()
+    month = now.strftime("%Y-%m")
+
+    with conn() as cn:
+        c = cn.cursor()
+        row = c.execute(
+            """
+            SELECT id, month, created_at, created_by, status, reviewed_at, reviewed_by, note
+              FROM inventur
+             WHERE month=?
+             ORDER BY datetime(created_at) DESC
+             LIMIT 1
+            """,
+            (month,),
+        ).fetchone()
+
+        if row:
+            return {
+                "id": row[0],
+                "month": row[1],
+                "created_at": row[2],
+                "created_by": row[3],
+                "status": row[4],
+                "reviewed_at": row[5],
+                "reviewed_by": row[6],
+                "note": row[7],
+            }
+
+        # Neu anlegen
+        created_at = datetime.datetime.utcnow().isoformat(timespec="seconds")
+        c.execute(
+            """
+            INSERT INTO inventur(month, created_at, created_by, status)
+            VALUES(?,?,?,?)
+            """,
+            (month, created_at, user, "draft"),
+        )
+        inv_id = c.lastrowid
+        cn.commit()
+
+        _log(user, "inventur_create", f"Neue Inventur für {month} (id={inv_id}) angelegt")
+
+        return {
+            "id": inv_id,
+            "month": month,
+            "created_at": created_at,
+            "created_by": user,
+            "status": "draft",
+            "reviewed_at": None,
+            "reviewed_by": None,
+            "note": "",
+        }
+
+
+def _load_inventur_items(inventur_id: int) -> pd.DataFrame:
+    with conn() as cn:
+        c = cn.cursor()
+        df = pd.read_sql(
+            """
+            SELECT item_id, counted_qty, purchase_price, total_value
+              FROM inventur_items
+             WHERE inventur_id=?
+            """,
+            cn,
+            params=(inventur_id,),
+        )
     return df
 
 
-def copy_from_previous_or_seed(year: int, month: int):
-    with closing(conn()) as c:
-        cnt = c.execute("SELECT COUNT(*) FROM inventur_items WHERE jahr=? AND monat=?",
-                        (year, month)).fetchone()[0]
-        if cnt > 0:
-            return
-
-        py, pm = (year, month - 1) if month > 1 else (year - 1, 12)
-        prev = pd.read_sql_query("SELECT * FROM inventur_items WHERE jahr=? AND monat=?",
-                                 c, params=(py, pm))
-        now = datetime.now().isoformat()
+def _save_inventur_items(inventur_id: int, username: str, edited_df: pd.DataFrame) -> None:
+    with conn() as cn:
+        c = cn.cursor()
+        # Bestehende Einträge löschen & neu schreiben (einfach & robust)
+        c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
         rows = []
-
-        source = prev if not prev.empty else pd.read_sql_query("SELECT * FROM inventur_items", c)
-        for _, r in source.iterrows():
-            rows.append((year, month, r["kategorie"], r["artikel"], float(r["ep_netto"]),
-                         float(r["stand_aktuell"]), 0.0, "System", now))
-
-        if rows:
-            c.executemany("""
-                INSERT INTO inventur_items
-                (jahr,monat,kategorie,artikel,ep_netto,stand_vormonat,stand_aktuell,last_user,last_modified)
-                VALUES(?,?,?,?,?,?,?,?,?)
-            """, rows)
-            c.commit()
-
-
-def save_inventory(year: int, month: int, df: pd.DataFrame, user: str):
-    now = datetime.now().isoformat()
-    with closing(conn()) as c:
-        c.execute("DELETE FROM inventur_items WHERE jahr=? AND monat=?", (year, month))
-        rows = []
-        for _, r in df.iterrows():
-            rows.append((year, month, str(r["kategorie"]), str(r["artikel"]),
-                         float(r["ep_netto"]), float(r["stand_vormonat"]),
-                         float(r["stand_aktuell"]), user, now))
-        c.executemany("""
-            INSERT INTO inventur_items
-            (jahr,monat,kategorie,artikel,ep_netto,stand_vormonat,stand_aktuell,last_user,last_modified)
-            VALUES(?,?,?,?,?,?,?,?,?)
-        """, rows)
-        c.execute("""
-            INSERT INTO inventur_logs(jahr,monat,artikel,user,changed_at,note)
-            VALUES(?,?,?,?,?,?)
-        """, (year, month, "*", user, now, "Inventur gespeichert"))
-        c.commit()
+        for _, row in edited_df.iterrows():
+            item_id = int(row["item_id"])
+            qty = float(row.get("Gezählte Menge", 0) or row.get("counted_qty", 0) or 0)
+            price = float(row.get("Einkaufspreis (€)", 0) or row.get("purchase_price", 0) or 0)
+            total = qty * price
+            rows.append((inventur_id, item_id, qty, price, total))
+        c.executemany(
+            """
+            INSERT INTO inventur_items(inventur_id, item_id, counted_qty, purchase_price, total_value)
+            VALUES(?,?,?,?,?)
+            """,
+            rows,
+        )
+        cn.commit()
+    _log(username, "inventur_save", f"Inventur {inventur_id} gespeichert ({len(rows)} Positionen)")
 
 
-def is_locked(year: int, month: int) -> bool:
-    with closing(conn()) as c:
-        changed = c.execute("SELECT COUNT(*) FROM inventur_logs WHERE jahr=? AND monat=?",
-                            (year, month)).fetchone()[0]
-    return changed > 0
+def _update_status(inventur_id: int, new_status: str, username: str) -> None:
+    now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        if new_status in ("approved", "rejected"):
+            c.execute(
+                """
+                UPDATE inventur
+                   SET status=?,
+                       reviewed_at=?,
+                       reviewed_by=?
+                 WHERE id=?
+                """,
+                (new_status, now, username, inventur_id),
+            )
+        else:
+            c.execute(
+                "UPDATE inventur SET status=? WHERE id=?",
+                (new_status, inventur_id),
+            )
+        cn.commit()
+    _log(username, "inventur_status", f"Inventur {inventur_id} Status → {new_status}")
 
 
-def make_inventory_pdf(year: int, month: int, df: pd.DataFrame):
-    ensure_export_dir()
-    fname = os.path.join(EXPORT_DIR, f"Inventur_{year}_{month:02d}.pdf")
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
-    y = h - 40
+def _list_inventuren() -> pd.DataFrame:
+    with conn() as cn:
+        df = pd.read_sql(
+            """
+            SELECT id, month, status, created_at, created_by, reviewed_at, reviewed_by
+              FROM inventur
+             ORDER BY month DESC, datetime(created_at) DESC
+            """,
+            cn,
+        )
+    return df
 
-    def line(txt, bold=False):
-        nonlocal y
-        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10 if not bold else 12)
-        c.drawString(40, y, str(txt))
-        y -= 16
+
+# ------------------------------------------------------------
+# PDF Export
+# ------------------------------------------------------------
+
+def _export_pdf(inventur_id: int) -> Optional[bytes]:
+    """
+    Erstellt ein einfaches PDF mit den Inventur-Daten.
+    Nutzt reportlab, falls vorhanden; sonst None.
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except Exception:
+        return None
+
+    # Kopf & Positionen laden
+    with conn() as cn:
+        c = cn.cursor()
+        head = c.execute(
+            """
+            SELECT month, created_at, created_by, status, reviewed_at, reviewed_by
+              FROM inventur
+             WHERE id=?
+            """,
+            (inventur_id,),
+        ).fetchone()
+        if not head:
+            return None
+
+        items = c.execute(
+            """
+            SELECT ii.counted_qty, ii.purchase_price, ii.total_value,
+                   it.name
+              FROM inventur_items ii
+              JOIN items it ON it.id = ii.item_id
+             WHERE ii.inventur_id=?
+             ORDER BY it.name
+            """,
+            (inventur_id,),
+        ).fetchall()
+
+    month, created_at, created_by, status, reviewed_at, reviewed_by = head
+    total_sum = sum((r[2] or 0) for r in items)
+
+    from io import BytesIO
+    buf = BytesIO()
+    canv = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    y = height - 40
+    canv.setFont("Helvetica-Bold", 14)
+    canv.drawString(40, y, f"Inventur {month}")
+    y -= 18
+    canv.setFont("Helvetica", 10)
+    canv.drawString(40, y, f"Erstellt am: {created_at or '-'} durch {created_by or '-'}")
+    y -= 14
+    canv.drawString(40, y, f"Status: {status}")
+    y -= 14
+    if reviewed_at or reviewed_by:
+        canv.drawString(40, y, f"Freigabe: {reviewed_at or '-'} durch {reviewed_by or '-'}")
+        y -= 14
+    y -= 10
+
+    canv.setFont("Helvetica-Bold", 10)
+    canv.drawString(40, y, "Artikel")
+    canv.drawString(260, y, "Menge")
+    canv.drawString(320, y, "EK-Preis")
+    canv.drawString(400, y, "Summe")
+    y -= 12
+    canv.line(40, y, width-40, y)
+    y -= 14
+
+    canv.setFont("Helvetica", 9)
+    for r in items:
+        qty, price, total, name = r
         if y < 60:
-            c.showPage()
-            y = h - 40
+            canv.showPage()
+            y = height - 40
+            canv.setFont("Helvetica-Bold", 10)
+            canv.drawString(40, y, "Artikel")
+            canv.drawString(260, y, "Menge")
+            canv.drawString(320, y, "EK-Preis")
+            canv.drawString(400, y, "Summe")
+            y -= 12
+            canv.line(40, y, width-40, y)
+            y -= 14
+            canv.setFont("Helvetica", 9)
 
-    line(f"Gastro Essentials – Inventur {year}-{month:02d}", bold=True)
-    line(f"Erstellt: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    line("")
-    total = 0.0
-    cur_cat = None
-    for _, r in df.sort_values(["kategorie", "artikel"]).iterrows():
-        if r["kategorie"] != cur_cat:
-            cur_cat = r["kategorie"]
-            line(f"[{cur_cat}]", bold=True)
-        wert = float(r["stand_aktuell"]) * float(r["ep_netto"])
-        total += wert
-        line(f"{r['artikel']} | EP: {r['ep_netto']:.2f} | Vormonat: {r['stand_vormonat']:.2f} | "
-             f"Aktuell: {r['stand_aktuell']:.2f} | Gesamt: {wert:.2f} €")
-    line("")
-    line(f"Summe Netto: {total:.2f} €", bold=True)
-    line("")
-    line("Kontrolliert: __________________________  Datum: _______________")
-    c.setFont("Helvetica-Oblique", 8)
-    c.drawString(40, 20, "© Roman Petek. Alle Rechte vorbehalten.")
-    c.save()
+        canv.drawString(40, y, str(name))
+        canv.drawRightString(300, y, f"{qty:.2f}")
+        canv.drawRightString(380, y, f"{(price or 0):.2f} €")
+        canv.drawRightString(470, y, f"{(total or 0):.2f} €")
+        y -= 12
 
-    with open(fname, "wb") as f:
-        f.write(buf.getvalue())
-    return fname
+    y -= 16
+    canv.setFont("Helvetica-Bold", 10)
+    canv.drawRightString(470, y, f"Gesamtwert: {total_sum:.2f} €")
+
+    canv.showPage()
+    canv.save()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
 
 
-# ----------------------------------------------------------
-# Haupt-Render-Funktion
-# ----------------------------------------------------------
+# ------------------------------------------------------------
+# UI: Aktuelle Inventur
+# ------------------------------------------------------------
 
-def render_inventur(role: str, username: str):
-    page_header("📦 Inventur", "Artikelbestände prüfen und dokumentieren")
+def _render_current_inventur():
+    user = _current_user()
+    _ensure_inventur_schema()
 
-    yy_list = list(range(2023, date.today().year + 1))
-    year = st.selectbox("Jahr", yy_list, index=yy_list.index(date.today().year))
+    inv = _get_or_create_current_inventur(user)
+    st.markdown(f"#### Inventur {inv['month']} ({inv['status']})")
 
-    section_title("Monat wählen")
-    mcols = st.columns(12)
-    sel_month = st.session_state.get("__inv_month", date.today().month)
-    for i, mc in enumerate(mcols, start=1):
-        if mc.button(MONTHS[i - 1], key=f"m_{year}_{i}", use_container_width=True):
-            sel_month = i
-            st.session_state.__inv_month = i
-
-    st.divider()
-    copy_from_previous_or_seed(year, sel_month)
-    df = load_inventory(year, sel_month)
-
-    if df.empty:
-        st.info("Keine Daten für diese Periode.")
+    items_df = _load_items()
+    if items_df.empty:
+        st.info("Keine Artikel im Stammdatenbestand gefunden. Bitte zuerst im Admin-Cockpit Artikel importieren.")
         return
 
-    df["gesamt_netto"] = df["ep_netto"].fillna(0) * df["stand_aktuell"].fillna(0)
-    locked = is_locked(year, sel_month)
-    readonly = (role != "admin" and locked)
+    # Bisherige Mengen holen
+    existing = _load_inventur_items(inv["id"])
+    existing_map = {int(r["item_id"]): r for _, r in existing.iterrows()} if not existing.empty else {}
 
-    st.caption("Nach dem ersten Speichern ist die Periode für Nicht-Admins gesperrt.")
-    section_title(f"Inventur {MONTHS[sel_month-1]} {year}")
+    # DataFrame für Editor bauen
+    df = pd.DataFrame({
+        "item_id": items_df["id"].astype(int),
+        "Artikel": items_df["name"],
+        "Einheit": items_df.get("unit", ""),
+        "Einkaufspreis (€)": items_df.get("purchase_price", 0.0).astype(float),
+    })
+    df["Gezählte Menge"] = df["item_id"].apply(
+        lambda iid: float(existing_map.get(int(iid), {}).get("counted_qty", 0) or 0)
+    )
+    df["Warenwert (€)"] = df["Gezählte Menge"] * df["Einkaufspreis (€)"]
+    total_value = df["Warenwert (€)"].sum()
 
-    ed = st.data_editor(
-        df[["id", "kategorie", "artikel", "ep_netto", "stand_vormonat", "stand_aktuell",
-            "gesamt_netto", "last_user", "last_modified"]],
-        hide_index=True, use_container_width=True,
-        disabled=["gesamt_netto", "last_user", "last_modified"]
-        if not readonly else df.columns.tolist(),
+    st.caption("Trage für jeden Artikel die physisch gezählte Menge ein und speichere die Inventur am Monatsende.")
+
+    edited = st.data_editor(
+        df,
+        num_rows="fixed",
+        use_container_width=True,
+        hide_index=True,
         column_config={
-            "ep_netto": st.column_config.NumberColumn("EP Netto (€)", format="%.2f"),
-            "stand_vormonat": st.column_config.NumberColumn("Stand Vormonat", format="%.2f"),
-            "stand_aktuell": st.column_config.NumberColumn("Stand Aktuell", format="%.2f"),
-            "gesamt_netto": st.column_config.NumberColumn("Gesamt Netto (€)", format="%.2f"),
+            "item_id": st.column_config.Column("item_id", visible=False),
+            "Artikel": st.column_config.TextColumn("Artikel", disabled=True),
+            "Einheit": st.column_config.TextColumn("Einheit", disabled=True),
+            "Einkaufspreis (€)": st.column_config.NumberColumn("Einkaufspreis (€)", disabled=True, format="%.2f"),
+            "Gezählte Menge": st.column_config.NumberColumn("Gezählte Menge", min_value=0.0, step=1.0, format="%.2f"),
+            "Warenwert (€)": st.column_config.NumberColumn("Warenwert (€)", disabled=True, format="%.2f"),
         },
-        key=f"inv_{year}_{sel_month}"
+        key="inv_editor",
     )
 
-    st.divider()
-    c1, c2, c3 = st.columns(3)
+    # Warenwert neu berechnen
+    edited["Warenwert (€)"] = edited["Gezählte Menge"].astype(float) * edited["Einkaufspreis (€)"].astype(float)
+    total_value = edited["Warenwert (€)"].sum()
 
-    if c1.button("🆕 Neue Inventur starten", use_container_width=True):
-        copy_from_previous_or_seed(date.today().year, date.today().month)
-        st.success("Neue Inventurperiode vorbereitet.")
-        st.rerun()
+    st.markdown(f"**Gesamtwarenwert dieser Inventur:** {total_value:,.2f} €".replace(",", " ").replace(".", ","))
 
-    if readonly:
-        c2.info("Diese Periode ist gesperrt – nur Admin kann ändern.")
-    else:
-        if c2.button("💾 Speichern", use_container_width=True):
-            save_inventory(year, sel_month, ed, username or "User")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("💾 Inventur speichern", use_container_width=True):
+            _save_inventur_items(inv["id"], user, edited)
             st.success("Inventur gespeichert.")
             st.rerun()
+    with col2:
+        if st.button("📤 Inventur einreichen (Review)", use_container_width=True):
+            _save_inventur_items(inv["id"], user, edited)
+            _update_status(inv["id"], "submitted", user)
+            st.success("Inventur eingereicht. Ein Admin/Betriebsleiter muss diese freigeben.")
+            st.rerun()
+    with col3:
+        if _is_admin() and st.button("✅ Inventur freigeben", use_container_width=True):
+            _update_status(inv["id"], "approved", user)
+            st.success("Inventur freigegeben.")
+            st.rerun()
 
-    if c3.button("📄 PDF erstellen", use_container_width=True):
-        fresh = load_inventory(year, sel_month)
-        fname = make_inventory_pdf(year, sel_month, fresh)
-        with open(fname, "rb") as f:
-            st.download_button("PDF herunterladen", f.read(),
-                               file_name=os.path.basename(fname),
-                               mime="application/pdf",
-                               key=f"pdf_{year}_{sel_month}")
+
+# ------------------------------------------------------------
+# UI: Historie
+# ------------------------------------------------------------
+
+def _render_history():
+    _ensure_inventur_schema()
+    df = _list_inventuren()
+    if df.empty:
+        st.info("Noch keine Inventuren erfasst.")
+        return
+
+    st.markdown("#### Bisherige Inventuren")
+    st.dataframe(
+        df.rename(
+            columns={
+                "month": "Monat",
+                "status": "Status",
+                "created_at": "Erstellt am",
+                "created_by": "Erstellt von",
+                "reviewed_at": "Freigegeben am",
+                "reviewed_by": "Freigegeben von",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    inv_ids = df["id"].tolist()
+    labels = [f"{row['month']} · {row['status']} · #{row['id']}" for _, row in df.iterrows()]
+    sel = st.selectbox("Inventur auswählen", options=inv_ids, format_func=lambda x: labels[inv_ids.index(x)])
+
+    if sel:
+        with conn() as cn:
+            c = cn.cursor()
+            head = c.execute(
+                """
+                SELECT month, status, created_at, created_by, reviewed_at, reviewed_by
+                  FROM inventur
+                 WHERE id=?
+                """,
+                (sel,),
+            ).fetchone()
+            items = pd.read_sql(
+                """
+                SELECT it.name AS Artikel,
+                       ii.counted_qty AS Menge,
+                       ii.purchase_price AS "Einkaufspreis (€)",
+                       ii.total_value AS "Warenwert (€)"
+                  FROM inventur_items ii
+                  JOIN items it ON it.id = ii.item_id
+                 WHERE ii.inventur_id=?
+                 ORDER BY it.name
+                """,
+                cn,
+                params=(sel,),
+            )
+
+        if head:
+            month, status, created_at, created_by, reviewed_at, reviewed_by = head
+            st.markdown(
+                f"**Inventur {month}** – Status: `{status}`  \n"
+                f"Erstellt am {created_at or '-'} durch {created_by or '-'}  \n"
+                f"Freigabe: {reviewed_at or '-'} durch {reviewed_by or '-'}"
+            )
+
+        if items.empty:
+            st.caption("Keine Positionen in dieser Inventur.")
+        else:
+            st.dataframe(items, use_container_width=True, hide_index=True)
+            total = float(items["Warenwert (€)"].fillna(0).sum())
+            st.markdown(f"**Gesamtwarenwert:** {total:,.2f} €".replace(",", " ").replace(".", ","))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📄 PDF exportieren", use_container_width=True, key=f"pdf_{sel}"):
+                pdf_bytes = _export_pdf(sel)
+                if not pdf_bytes:
+                    st.error("PDF-Export nicht möglich. Ist 'reportlab' installiert?")
+                else:
+                    st.download_button(
+                        "Download PDF",
+                        data=pdf_bytes,
+                        file_name=f"inventur_{month.replace('-', '')}_{sel}.pdf",
+                        mime="application/pdf",
+                    )
+        with col2:
+            if _is_admin() and st.button("🔁 Status zurück auf 'draft'", use_container_width=True, key=f"reset_{sel}"):
+                _update_status(sel, "draft", _current_user())
+                st.success("Status zurück auf 'draft' gesetzt.")
+                st.rerun()
+
+
+# ------------------------------------------------------------
+# Entry-Point
+# ------------------------------------------------------------
+
+def render_inventur(username: str = ""):
+    """
+    Wird von app.py aufgerufen.
+    Sichtbar nur für Admins und Nutzer mit Funktion 'Inventur'.
+    """
+    if not _has_inventur_right():
+        st.error("Kein Zugriff auf Inventur. Bitte Admin kontaktieren.")
+        return
+
+    st.markdown("### 📦 Monatsinventur")
+
+    tabs = st.tabs(["Aktuelle Inventur", "Historie"])
+    with tabs[0]:
+        _render_current_inventur()
+    with tabs[1]:
+        _render_history()
