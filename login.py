@@ -33,20 +33,27 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
                         #0b0b12;
         }
 
+        /* ---- NERVIGE OBERLIEGENDE PILLE ENTFERNEN ----
+           Auf der Login-Seite: erstes Block-Element im main-Container wegblenden.
+           (Gilt nur hier, weil dieses CSS nur auf der Login-View injiziert wird.) */
+        section.main > div.block-container > div:nth-of-type(1) {
+            display: none !important;
+        }
+
         /* Login-Card */
         .ge-card {
-            max-width: 720px;
-            margin: 6vh auto 4vh auto;
+            max-width: 560px;            /* etwas schmäler */
+            margin: 8vh auto 4vh auto;   /* zentriert */
             background: rgba(20,20,28,0.96);
             border: 1px solid rgba(255,255,255,0.06);
             border-radius: 18px;
             box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-            padding: 26px 26px;
+            padding: 24px 24px;
             color: #e5e7eb;
         }
-        .ge-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 6px 0; }
-        .ge-sub   { font-size: .85rem; opacity: .75; margin: 0 0 10px 0; }
-        .ge-version { text-align:right; opacity:.55; font-size:.75rem; margin-bottom: 6px; }
+        .ge-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 4px 0; }
+        .ge-sub   { font-size: .85rem; opacity: .75; margin: 0 0 8px 0; }
+        .ge-version { text-align:right; opacity:.55; font-size:.75rem; margin-bottom: 10px; }
         .ge-footer{ text-align:center; opacity:.65; font-size:.8rem; margin-top: 14px; }
 
         /* Alle Streamlit-Dekorationen / Pillen / Badges killen */
@@ -73,13 +80,13 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
     # ---- Karte
     st.markdown("<div class='ge-card'>", unsafe_allow_html=True)
 
-    # Titel & Untertitel (ohne Badge/Pille)
+    # Titel & Untertitel
     st.markdown(f"<div class='ge-title'>{app_name} 🍸</div>", unsafe_allow_html=True)
     st.markdown(
         "<div class='ge-sub'>Bitte melde dich an, um fortzufahren.</div>",
         unsafe_allow_html=True,
     )
-    # Version nur als schlichter Text, keine Pille
+    # Version nur als kleiner Text
     st.markdown(
         f"<div class='ge-version'>v{app_version}</div>",
         unsafe_allow_html=True,
