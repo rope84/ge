@@ -101,11 +101,17 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             display: none !important;
         }}
 
-        /* Glass-Card für alle Forms (Login + Registrierung) */
+        /* ÄUSSEREN Form-Rahmen komplett entfernen */
         [data-testid="stForm"] {{
             max-width: 520px;
             margin: 0 auto 22px auto !important;
+            padding: 0 !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
         }}
+
+        /* Blaue Glass-Card innerhalb des Forms */
         [data-testid="stForm"] > div:first-child {{
             background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(37,99,235,0.88)) !important;
             border-radius: 24px !important;
@@ -114,6 +120,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
             box-shadow:
                 0 24px 55px rgba(0,0,0,0.65),
                 0 0 0 1px rgba(255,255,255,0.04) !important;
+            margin: 0 !important;
         }}
 
         /* Expander-Header etwas hübscher */
