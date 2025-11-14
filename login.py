@@ -15,7 +15,7 @@ def _lazy_auth():
 
 def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
     """
-    Zeichnet die Login-Card.
+    Zeichnet die Login-UI.
     Rückgabe: (username, password, pressed_login)
     Registrierung wird intern behandelt (Message-Feedback), beeinflusst Rückgabe nicht.
     """
@@ -33,44 +33,22 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
                         #0b0b12;
         }
 
-        /* --------- NERVIGE PILLE ÜBERDECKEN ---------
-           Wir legen über den oberen Bereich von section.main
-           einen dunklen Layer, der alles darunter „unsichtbar“ macht. */
-        section.main {
-            position: relative;
-        }
-        section.main::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 120px;          /* Höhe des überdeckten Bereichs */
-            background: #050509;    /* gleiches/dunkleres Background */
-            z-index: 2;
-        }
-        .ge-card {
-            position: relative;
-            z-index: 3;             /* über dem Overlay */
+        /* --- LOGIN-BEREICH SCHMÄLER & ZENTRIERT ----------------- */
+        [data-testid="block-container"] {
+            max-width: 640px !important;          /* SCHMÄLER */
+            margin: 0 auto !important;            /* zentriert */
+            padding-top: 120px !important;        /* etwas nach unten */
         }
 
-        /* Login-Card schmäler & zentriert */
-        .ge-card {
-            max-width: 480px;            /* SCHMÄLER */
-            margin: 10vh auto 4vh auto;  /* weiter nach unten */
-            background: rgba(20,20,28,0.96);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 18px;
-            box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-            padding: 24px 24px;
-            color: #e5e7eb;
+        /* --- NERVIGE PILLE KILLEN --------------------------------
+           Der mysteriöse Balken ist der erste direkte Block im Container.
+           Wir blenden ihn einfach aus.
+        */
+        [data-testid="block-container"] > div:first-child {
+            display: none !important;
         }
-        .ge-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 4px 0; }
-        .ge-sub   { font-size: .85rem; opacity: .75; margin: 0 0 8px 0; }
-        .ge-version { text-align:right; opacity:.55; font-size:.75rem; margin-bottom: 10px; }
-        .ge-footer{ text-align:center; opacity:.65; font-size:.8rem; margin-top: 14px; }
 
-        /* Alle Streamlit-Dekorationen / Pillen / Badges killen */
+        /* Deko/Toolbar/Pillen von Streamlit ausblenden */
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stCloudAppStatus"],
@@ -86,15 +64,18 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
         button:has(span:empty) {
             display: none !important;
         }
+
+        /* Optik Überschrift / Footer */
+        .ge-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+        .ge-sub   { font-size: .9rem;  opacity: .78;  margin-bottom: 12px; }
+        .ge-version { text-align:right; opacity:.55; font-size:.75rem; margin-bottom: 16px; }
+        .ge-footer{ text-align:center; opacity:.65; font-size:.8rem; margin-top: 14px; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---- Karte
-    st.markdown("<div class='ge-card'>", unsafe_allow_html=True)
-
-    # Titel & Untertitel
+    # ---- Headline / Intro (ohne extra Card, alles im schmalen Container)
     st.markdown(f"<div class='ge-title'>{app_name} 🍸</div>", unsafe_allow_html=True)
     st.markdown(
         "<div class='ge-sub'>Bitte melde dich an, um fortzufahren.</div>",
@@ -163,6 +144,5 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
         "<div class='ge-footer'>© O-der Klub · Gastro Essentials</div>",
         unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     return (username or "").strip(), (password or ""), bool(pressed_login)
