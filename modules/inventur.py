@@ -480,7 +480,7 @@ def _render_current_inventur():
         use_container_width=True,
         hide_index=True,
         column_config={
-            "item_id": st.column_config.Column("item_id", visible=False),
+            "item_id": "item_id": st.column_config.Column("item_id"),  # sichtbar, aber technisch,
             "Artikel": st.column_config.TextColumn("Artikel", disabled=True),
             "Einheit": st.column_config.TextColumn("Einheit", disabled=True),
             "Einkaufspreis (€)": st.column_config.NumberColumn("Einkaufspreis (€)", disabled=True, format="%.2f"),
