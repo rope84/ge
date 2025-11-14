@@ -57,10 +57,14 @@ def _inject_styles():
             display: none !important;
         }
 
-        /* ---------- HERO-PILLE killen (genau wie im Login) ---------- */
-        div[style*="linear-gradient"][style*="border-radius: 999px"],
-        div[style*="linear-gradient"][style*="border-radius:999px"],
-        div[style*="linear-gradient"][style*="999px"] {
+        /* ---------- HERO-/Deko-PILLEN GLOBAL KILLEN ---------- */
+        /* egal ob mit/ohne Gradient – alles mit riesigem Border-Radius weg */
+        div[style*="border-radius: 999px"],
+        div[style*="border-radius:999px"],
+        div[style*="border-radius: 1000px"],
+        div[style*="border-radius: 9999px"],
+        div[style*="border-radius: 999rem"],
+        div[style*="border-radius:999rem"] {
             display: none !important;
         }
 
