@@ -39,7 +39,7 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* --------- Globale Deko-/Pillen-Elemente wie beim Login verstecken --------- */
+        /* ---------- GLOBAL: Toolbar / Badges / leere Buttons verstecken ---------- */
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stCloudAppStatus"],
@@ -51,13 +51,20 @@ def _inject_styles():
         .viewerBadge_link__qRIco,
         button[title="Manage app"],
         button[title="View source"],
-        /* das war beim Login der eigentliche „Pillen“-Fix: leere Secondary-Buttons */
+        /* wie beim Login: leere Secondary-Buttons (= kleine Pills) entfernen */
         [data-testid="baseButton-secondary"]:has(> div:empty),
         button:has(span:empty) {
             display: none !important;
         }
 
-        /* Falls Streamlit-Headings eigene Deko per ::after haben */
+        /* ---------- HERO-PILLE killen (genau wie im Login) ---------- */
+        div[style*="linear-gradient"][style*="border-radius: 999px"],
+        div[style*="linear-gradient"][style*="border-radius:999px"],
+        div[style*="linear-gradient"][style*="999px"] {
+            display: none !important;
+        }
+
+        /* Falls Streamlit-Headings noch Deko verwenden */
         [data-testid="stHeading"]::after {
             display: none !important;
         }
