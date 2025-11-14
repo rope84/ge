@@ -218,7 +218,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
     # FOOTER
     # ------------------------------------------------------
     st.markdown(
-        "<div class='ge-footer'>© O-der Klub · Gastro Essentials</div>",
+        "<div class='ge-footer'>© Gastro Essentials</div>",
         unsafe_allow_html=True,
     )
 
