@@ -39,12 +39,24 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* --- Globale Pillen-/Hero-Deko von Streamlit killen (wie beim Login) --- */
-        div[style*="linear-gradient"][style*="999px"],
-        div[style*="linear-gradient"][style*="border-radius: 999px"],
-        div[style*="linear-gradient"][style*="border-radius:999px"] {
+        /* --------- Globale Deko-/Pillen-Elemente wie beim Login verstecken --------- */
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stCloudAppStatus"],
+        header [data-testid="stToolbar"],
+        header [data-testid="stHeaderActionButtons"],
+        header [data-testid="stActionButton"],
+        .stDeployButton,
+        .viewerBadge_container__r3R7,
+        .viewerBadge_link__qRIco,
+        button[title="Manage app"],
+        button[title="View source"],
+        /* das war beim Login der eigentliche „Pillen“-Fix: leere Secondary-Buttons */
+        [data-testid="baseButton-secondary"]:has(> div:empty),
+        button:has(span:empty) {
             display: none !important;
         }
+
         /* Falls Streamlit-Headings eigene Deko per ::after haben */
         [data-testid="stHeading"]::after {
             display: none !important;
