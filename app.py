@@ -14,11 +14,11 @@ setup_db()  # DB-Datei + Basis vorhanden
 
 # ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
 try:
-    auth_mod = importlib.import_module("core.auth")  # nicht am Top-Level weiterverwenden
+    auth_mod = importlib.import_module("core.auth")
     if hasattr(auth_mod, "ensure_admin_consistency"):
         auth_mod.ensure_admin_consistency()
 except Exception:
-    # nicht blockieren – Details stehen im Streamlit-Log
+    # App nicht blockieren – Details im Streamlit-Log
     pass
 
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
@@ -36,9 +36,9 @@ def import_modules():
             file_path = Path(inspect.getfile(mod))
             loaded_meta[base] = {
                 "file": str(file_path),
-                "mtime": datetime.datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(
-                    sep=" ", timespec="seconds"
-                ),
+                "mtime": datetime.datetime.fromtimestamp(
+                    file_path.stat().st_mtime
+                ).isoformat(sep=" ", timespec="seconds"),
                 "qualified": qualified_name,
             }
         except Exception as e:
@@ -51,6 +51,7 @@ def import_modules():
 
     return modules, errors, loaded_meta
 
+
 modules, import_errors, import_meta = import_modules()
 
 # ---------------- Session Init ----------------
@@ -62,6 +63,7 @@ def init_session():
     s.setdefault("scope", "")
     s.setdefault("nav_choice", "Start")
 
+
 init_session()
 
 # ---------------- Auth ----------------
@@ -70,9 +72,11 @@ def logout():
     init_session()
     st.rerun()
 
+
 def _lazy_auth():
     """core.auth erst laden, wenn wirklich gebraucht (verhindert Zyklen)."""
     return importlib.import_module("core.auth")
+
 
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
@@ -83,33 +87,41 @@ def login_screen():
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
 
-    # Sichtbarer Mini-Diagnoseblock
+    # kleiner Diagnose-Block
     try:
         with conn() as cn:
             c = cn.cursor()
             row = c.execute(
-                "SELECT username, COALESCE(status,'active'), COALESCE(functions,''), LENGTH(COALESCE(passhash,'')) "
-                "FROM users WHERE username=?",
-                (u.strip(),)
+                """
+                SELECT username,
+                       COALESCE(status,'active') AS status,
+                       COALESCE(functions,'') AS functions,
+                       LENGTH(COALESCE(passhash,'')) AS pass_len
+                  FROM users
+                 WHERE username=?
+            """,
+                (u.strip(),),
             ).fetchone()
         if row:
-            st.caption(f"Debug · user={row[0]} · status={row[1]} · functions={row[2]} · passhash_len={row[3]}")
+            st.caption(
+                f"Debug · user={row[0]} · status={row[1]} · "
+                f"functions={row[2]} · passhash_len={row[3]}"
+            )
         else:
             st.caption("Debug · Benutzer in DB nicht gefunden.")
     except Exception as e:
         st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
 
-    # Eigentliche Anmeldung
+    # eigentlicher Login
     try:
         auth = _lazy_auth()
-        ok, role, _scope = auth._do_login(u, p)  # (ok, role, functions)
+        ok, role, _scope = auth._do_login(u, p)
     except Exception as e:
         st.error("Login-Fehler (interner Ausnahmefehler).")
         st.exception(e)
         return
 
     if ok:
-        # Falls core.auth noch keine Rolle gesetzt hat, Standard setzen
         if not st.session_state.get("role"):
             st.session_state["role"] = role or "user"
         st.rerun()
@@ -148,7 +160,9 @@ def fixed_footer():
 
         <div class="footer">
             👤 {st.session_state.get('username', 'Gast')}<br>
-            Rechte: <span style='opacity:0.8'>{st.session_state.get('role', 'guest')}</span><br>
+            Rechte: <span style='opacity:0.8'>
+                {st.session_state.get('role', 'guest')}
+            </span><br>
             <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
         </div>
         """,
@@ -204,6 +218,7 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
+
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
     mod_key = DISPLAY_TO_MODULE.get(display_key)
@@ -217,7 +232,9 @@ def route():
     if not mod_func:
         st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
         if mod_err:
-            with st.expander(f"Details zu Ladefehler '{mod_key}'", expanded=False):
+            with st.expander(
+                f"Details zu Ladefehler '{mod_key}'", expanded=False
+            ):
                 st.code(mod_err, language="text")
         return
 
@@ -230,7 +247,10 @@ def route():
             mod_func()
         elif mod_key == "inventur":
             try:
-                mod_func(st.session_state.username or "unknown", st.session_state.role or "guest")
+                mod_func(
+                    st.session_state.username or "unknown",
+                    st.session_state.role or "guest",
+                )
             except TypeError:
                 mod_func(st.session_state.username or "unknown")
         elif mod_key == "profile":
@@ -256,6 +276,7 @@ def main():
     else:
         sidebar()
         route()
+
 
 if __name__ == "__main__":
     main()
