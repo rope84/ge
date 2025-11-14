@@ -257,13 +257,8 @@ def route():
         elif mod_key == "dashboard":
             mod_func()
         elif mod_key == "inventur":
-            try:
-                mod_func(
-                    st.session_state.username or "unknown",
-                    st.session_state.role or "guest",
-                )
-            except TypeError:
-                mod_func(st.session_state.username or "unknown")
+            # Einfach Username übergeben, Rolle in Session
+            mod_func(st.session_state.username or "unknown")
         elif mod_key == "profile":
             mod_func(st.session_state.username or "")
         elif mod_key == "admin":
