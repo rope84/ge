@@ -2,6 +2,7 @@
 import streamlit as st
 from typing import Tuple
 import importlib
+from core.db import conn
 
 
 def _lazy_auth():
@@ -13,94 +14,106 @@ def _lazy_auth():
         return importlib.import_module("core.auth")
 
 
+def _get_business_name(fallback: str) -> str:
+    """Liest den Betriebsnamen aus meta.business_name, sonst fallback."""
+    try:
+        with conn() as cn:
+            c = cn.cursor()
+            row = c.execute(
+                "SELECT value FROM meta WHERE key='business_name'"
+            ).fetchone()
+        if row and (row[0] or "").strip():
+            return row[0].strip()
+    except Exception:
+        pass
+    return fallback
+
+
 def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
-    """Zentrierter, moderner Login-Screen mit Registrierung."""
+    """Zentrierter Login mit Betriebsnamen, ohne nervige Pille."""
+
+    business_name = _get_business_name(app_name)
 
     st.markdown(
-        """
+        f"""
         <style>
         /* Sidebar ausblenden */
-        [data-testid="stSidebar"] { display:none !important; }
+        [data-testid="stSidebar"] {{ display:none !important; }}
 
         /* Hintergrund */
-        body {
+        body {{
             background: radial-gradient(900px 500px at 20% -10%, #1e1b4b33, transparent),
                         radial-gradient(900px 500px at 120% 0%, #0f766e33, transparent),
                         #020617;
-        }
+        }}
 
-        /* Hauptcontainer schmäler & zentriert */
-        [data-testid="block-container"] {
+        /* Hauptcontainer zentrieren */
+        [data-testid="block-container"] {{
             max-width: 900px !important;
             margin: 0 auto !important;
             padding-top: 10vh !important;
             display: flex;
             flex-direction: column;
-            align-items: center;       /* alles in die Mitte */
-        }
+            align-items: center;
+        }}
 
-        /* Entfernt die leere „Pille“/erste Box von Streamlit */
-        [data-testid="block-container"] > div:first-child {
+        /* Diese mysteriöse „Pille“ (gradient mit großer Rundung) killen */
+        div[style*="border-radius: 999px"][style*="linear-gradient"],
+        div[style*="border-radius:999px"][style*="linear-gradient"] {{
             display: none !important;
-        }
+        }}
+
+        /* Login-Form wirklich schmäler machen */
+        div[data-testid="stForm"] {{
+            max-width: 520px !important;
+            margin: 0 auto !important;
+        }}
 
         /* Head-Bereich */
-        .ge-head {
+        .ge-head {{
             text-align: center;
-            margin-bottom: 18px;
-        }
-        .ge-title {
+            margin-bottom: 10px;
+        }}
+        .ge-title {{
             font-size: 1.7rem;
             font-weight: 700;
             letter-spacing: 0.02em;
             margin-bottom: 4px;
-        }
-        .ge-sub {
+        }}
+        .ge-sub {{
             font-size: 0.9rem;
             opacity: 0.78;
-            margin-bottom: 6px;
-        }
-        .ge-version {
+            margin-bottom: 4px;
+        }}
+        .ge-version {{
             font-size: 0.8rem;
             opacity: 0.5;
-            margin-bottom: 20px;
-        }
+            margin-bottom: 24px;
+        }}
 
-        /* Glassmorphism-Card für Login */
-        .ge-card {
-            width: 100%;
-            max-width: 520px;                  /* SCHMÄLER */
-            margin: 0 auto 22px auto;
-            padding: 22px 22px 20px 22px;
-            border-radius: 22px;
-            border: 1px solid rgba(255,255,255,0.09);
+        /* Glass-Card Look für das Form-Wrapper-Div */
+        div[data-testid="stForm"] > div:first-child {{
+            border-radius: 22px !important;
+            border: 1px solid rgba(255,255,255,0.09) !important;
             background: linear-gradient(
                             135deg,
                             rgba(15,23,42,0.96),
                             rgba(30,64,175,0.85)
-                        );
-            background-blend-mode: overlay;
+                        ) !important;
             box-shadow:
                 0 24px 60px rgba(0,0,0,0.7),
-                0 0 0 1px rgba(255,255,255,0.02);
+                0 0 0 1px rgba(255,255,255,0.02) !important;
             backdrop-filter: blur(18px);
-        }
+            padding: 22px 22px 20px 22px !important;
+        }}
 
-        /* Expander schmäler halten */
-        .ge-wrapper > div[data-testid="stExpander"] {
-            width: 100%;
-            max-width: 520px;
-            margin: 0 auto;
-        }
-
-        /* Footer */
-        .ge-footer {
+        .ge-footer {{
             text-align:center;
             opacity:.6;
             font-size:.8rem;
             margin-top: 26px;
             margin-bottom: 10vh;
-        }
+        }}
 
         /* Diverse Streamlit-Badges / Toolbar verstecken */
         [data-testid="stDecoration"],
@@ -116,27 +129,25 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
         button[title="View source"],
         [data-testid="baseButton-secondary"]:has(> div:empty),
         button:has(span:empty)
-        { display:none !important; }
+        {{ display:none !important; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---------- HEAD (zentriert) ----------
+    # ---------- HEAD (zentriert, mit Betriebsname) ----------
     st.markdown(
         f"""
         <div class="ge-head">
-            <div class="ge-title">{app_name} 🍸</div>
+            <div class="ge-title">{business_name}</div>
             <div class="ge-sub">Bitte melde dich an, um fortzufahren.</div>
-            <div class="ge-version">v{app_version}</div>
+            <div class="ge-version">Gastro Essentials · v{app_version}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---------- LOGIN-CARD ----------
-    st.markdown("<div class='ge-card'>", unsafe_allow_html=True)
-
+    # ---------- LOGIN-FORM ----------
     with st.form("ge_login_form", clear_on_submit=False):
         username = st.text_input("Benutzername", placeholder="username", key="ge_user")
         password = st.text_input("Passwort", type="password", placeholder="••••••••", key="ge_pass")
@@ -148,9 +159,7 @@ def render_login_form(app_name: str, app_version: str) -> Tuple[str, str, bool]:
         st.caption("Hinweis: Mind. 6 Zeichen, 1 Großbuchstabe, 1 Sonderzeichen.")
         pressed_login = st.form_submit_button("Einloggen", use_container_width=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---------- REGISTRIERUNG (unter der Card, gleich breit) ----------
+    # ---------- REGISTRIERUNG ----------
     with st.expander("Noch kein Konto? Jetzt registrieren", expanded=False):
         with st.form("ge_register_form", clear_on_submit=True):
             r_user = st.text_input("Benutzername (öffentlich)", key="reg_user")
