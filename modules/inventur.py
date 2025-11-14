@@ -39,37 +39,13 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* ---------- GLOBAL: Toolbar / Badges / leere Buttons verstecken ---------- */
-        [data-testid="stDecoration"],
-        [data-testid="stStatusWidget"],
-        [data-testid="stCloudAppStatus"],
-        header [data-testid="stToolbar"],
-        header [data-testid="stHeaderActionButtons"],
-        header [data-testid="stActionButton"],
-        .stDeployButton,
-        .viewerBadge_container__r3R7,
-        .viewerBadge_link__qRIco,
-        button[title="Manage app"],
-        button[title="View source"],
-        /* wie beim Login: leere Secondary-Buttons (= kleine Pills) entfernen */
-        [data-testid="baseButton-secondary"]:has(> div:empty),
-        button:has(span:empty) {
-            display: none !important;
-        }
-
-        /* ---------- HERO-/Deko-PILLEN GLOBAL KILLEN ---------- */
-        /* egal ob mit/ohne Gradient – alles mit riesigem Border-Radius weg */
-        div[style*="border-radius: 999px"],
-        div[style*="border-radius:999px"],
-        div[style*="border-radius: 1000px"],
-        div[style*="border-radius: 9999px"],
-        div[style*="border-radius: 999rem"],
-        div[style*="border-radius:999rem"] {
-            display: none !important;
-        }
-
-        /* Falls Streamlit-Headings noch Deko verwenden */
-        [data-testid="stHeading"]::after {
+        /* -------------------------------------------------
+           Global: Gradient-"Pille" (Hero-Balken) entfernen
+           (gleiches Pattern wie im Login)
+        --------------------------------------------------*/
+        div[style*="linear-gradient"][style*="999px"],
+        div[style*="linear-gradient"][style*="border-radius: 999px"],
+        div[style*="linear-gradient"][style*="border-radius:999px"] {
             display: none !important;
         }
 
@@ -93,14 +69,6 @@ def _inject_styles():
             font-size: .78rem;
             color: #9ca3af;
             opacity: .8;
-        }
-
-        /* Eigene Abschnittsüberschriften (statt Streamlit-Headings) */
-        .inv-section-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin: 0 0 0.75rem 0;
-            color: #e5e7eb;
         }
 
         .inv-card {
@@ -208,8 +176,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     # gibt None zurück, wenn noch keine Inventur existiert
     current_inv = invdb.get_current_inventur(auto_create=False, username=username)
 
-    # eigene Überschrift statt Streamlit-Heading
-    st.markdown("<div class='inv-section-title'>Aktuelle Inventur</div>", unsafe_allow_html=True)
+    st.markdown("### Aktuelle Inventur")
 
     with st.container():
         st.markdown("<div class='inv-card'>", unsafe_allow_html=True)
@@ -303,8 +270,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
 # History / Rückblick
 # ---------------------------------------------------------
 def _render_history():
-    # eigene Überschrift statt Streamlit-Heading
-    st.markdown("<div class='inv-section-title'>Inventur-Historie</div>", unsafe_allow_html=True)
+    st.markdown("### Inventur-Historie")
 
     all_inv = invdb.list_all_inventuren()
     if not all_inv:
