@@ -192,28 +192,32 @@ def sidebar():
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        display_pages = ["Start", "Abrechnung", "Dashboard", "Inventur", "Profil"]
-        if st.session_state.role == "admin":
+        # --- Rechte für Inventur prüfen ---
+        funcs = (st.session_state.get("scope") or "").lower()
+        role = (st.session_state.get("role") or "").lower()
+
+        display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+
+        if ("inventur" in funcs) or (role == "admin"):
+            # Inventur vor Profil einfügen
+            display_pages.insert(3, "Inventur")
+
+        if role == "admin":
             display_pages.append("Admin-Cockpit")
 
         st.radio(
             "Navigation",
             display_pages,
-            index=display_pages.index(
-                st.session_state.get("nav_choice", "Start")
-            ),
+            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
             label_visibility="collapsed",
             key="nav_choice",
         )
 
         st.divider()
-        if st.session_state.auth and st.button(
-            "Logout", use_container_width=True
-        ):
+        if st.session_state.auth and st.button("Logout", use_container_width=True):
             logout()
 
         fixed_footer()
-
 
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
