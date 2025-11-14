@@ -39,6 +39,13 @@ def _inject_styles():
     st.markdown(
         """
         <style>
+        /* --- Global: Kill die große dekorative Pille (wie im Login) --- */
+        div[style*="linear-gradient"][style*="999px"],
+        div[style*="linear-gradient"][style*="border-radius: 999px"],
+        div[style*="linear-gradient"][style*="border-radius:999px"] {
+            display: none !important;
+        }
+
         .inv-hero {
             text-align: left;
             margin-bottom: 24px;
