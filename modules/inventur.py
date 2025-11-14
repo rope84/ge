@@ -475,20 +475,17 @@ def _render_current_inventur():
     st.caption("Trage für jeden Artikel die physisch gezählte Menge ein und speichere die Inventur am Monatsende.")
 
     edited = st.data_editor(
-        df,
-        num_rows="fixed",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "item_id": "item_id": st.column_config.Column("item_id"),  # sichtbar, aber technisch,
-            "Artikel": st.column_config.TextColumn("Artikel", disabled=True),
-            "Einheit": st.column_config.TextColumn("Einheit", disabled=True),
-            "Einkaufspreis (€)": st.column_config.NumberColumn("Einkaufspreis (€)", disabled=True, format="%.2f"),
-            "Gezählte Menge": st.column_config.NumberColumn("Gezählte Menge", min_value=0.0, step=1.0, format="%.2f"),
-            "Warenwert (€)": st.column_config.NumberColumn("Warenwert (€)", disabled=True, format="%.2f"),
-        },
-        key="inv_editor",
-    )
+    df,
+    key="inv_items",
+    column_config={
+        "item_id": st.column_config.Column("item_id", disabled=True),  # FIXED
+        "name": st.column_config.TextColumn("Artikel"),
+        "counted_qty": st.column_config.NumberColumn("Gezählte Menge"),
+        "purchase_price": st.column_config.NumberColumn("Einkaufspreis (€)"),
+        "total_value": st.column_config.NumberColumn("Warenwert (€)"),
+    },
+    hide_index=True,
+)
 
     # Warenwert neu berechnen
     edited["Warenwert (€)"] = edited["Gezählte Menge"].astype(float) * edited["Einkaufspreis (€)"].astype(float)
