@@ -63,12 +63,12 @@ def _ensure_inventur_schema() -> None:
             c.execute(
                 """
                 CREATE TABLE inventur_items (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    inventur_id   INTEGER NOT NULL,
-                    item_id       INTEGER NOT NULL,
-                    counted_qty   REAL NOT NULL DEFAULT 0,
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inventur_id    INTEGER NOT NULL,
+                    item_id        INTEGER NOT NULL,
+                    counted_qty    REAL NOT NULL DEFAULT 0,
                     purchase_price REAL,
-                    total_value   REAL,
+                    total_value    REAL,
                     FOREIGN KEY(inventur_id) REFERENCES inventur(id)
                 )
                 """
@@ -80,11 +80,12 @@ def _ensure_inventur_schema() -> None:
                 if col not in cols:
                     c.execute(f"ALTER TABLE inventur_items ADD COLUMN {ddl}")
 
-            # Wichtig: item_id nachziehen, falls alte Tabelle ohne diese Spalte existiert
-            add_if_missing("item_id",       "item_id       INTEGER NOT NULL DEFAULT 0")
-            add_if_missing("counted_qty",   "counted_qty   REAL NOT NULL DEFAULT 0")
+            # Wichtig: alle neuen Spalten nachziehen
+            add_if_missing("inventur_id",   "inventur_id    INTEGER NOT NULL DEFAULT 0")
+            add_if_missing("item_id",       "item_id        INTEGER NOT NULL DEFAULT 0")
+            add_if_missing("counted_qty",   "counted_qty    REAL NOT NULL DEFAULT 0")
             add_if_missing("purchase_price","purchase_price REAL")
-            add_if_missing("total_value",   "total_value   REAL")
+            add_if_missing("total_value",   "total_value    REAL")
 
         # --- audit_log (für Änderungen) ---
         if not _table_exists(c, "audit_log"):
