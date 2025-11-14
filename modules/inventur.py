@@ -39,10 +39,14 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* --- Global: Kill die große dekorative Pille (wie im Login) --- */
+        /* --- Globale Pillen-/Hero-Deko von Streamlit killen (wie beim Login) --- */
         div[style*="linear-gradient"][style*="999px"],
         div[style*="linear-gradient"][style*="border-radius: 999px"],
         div[style*="linear-gradient"][style*="border-radius:999px"] {
+            display: none !important;
+        }
+        /* Falls Streamlit-Headings eigene Deko per ::after haben */
+        [data-testid="stHeading"]::after {
             display: none !important;
         }
 
@@ -66,6 +70,14 @@ def _inject_styles():
             font-size: .78rem;
             color: #9ca3af;
             opacity: .8;
+        }
+
+        /* Eigene Abschnittsüberschriften (statt Streamlit-Headings) */
+        .inv-section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 0.75rem 0;
+            color: #e5e7eb;
         }
 
         .inv-card {
@@ -173,7 +185,8 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     # gibt None zurück, wenn noch keine Inventur existiert
     current_inv = invdb.get_current_inventur(auto_create=False, username=username)
 
-    st.markdown("### Aktuelle Inventur")
+    # eigene Überschrift statt Streamlit-Heading
+    st.markdown("<div class='inv-section-title'>Aktuelle Inventur</div>", unsafe_allow_html=True)
 
     with st.container():
         st.markdown("<div class='inv-card'>", unsafe_allow_html=True)
@@ -267,7 +280,8 @@ def _render_current_inventur(username: str, is_reviewer: bool):
 # History / Rückblick
 # ---------------------------------------------------------
 def _render_history():
-    st.markdown("### Inventur-Historie")
+    # eigene Überschrift statt Streamlit-Heading
+    st.markdown("<div class='inv-section-title'>Inventur-Historie</div>", unsafe_allow_html=True)
 
     all_inv = invdb.list_all_inventuren()
     if not all_inv:
