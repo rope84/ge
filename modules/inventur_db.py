@@ -10,18 +10,24 @@ from core.db import conn
 def has_any_items() -> bool:
     """
     Prüft, ob überhaupt Artikel im Artikelstamm vorhanden sind.
-    Nutzt die Tabelle 'items' und berücksichtigt optional eine active-Flag,
-    falls es die gibt.
+    - Wenn es eine Spalte 'active' gibt, werden nur aktive gezählt.
+    - Wenn nicht, werden alle Zeilen in 'items' gezählt.
     """
     with conn() as cn:
         c = cn.cursor()
-        row = c.execute(
-            """
-            SELECT COUNT(*)
-              FROM items
-             WHERE COALESCE(active, 1) = 1
-            """
-        ).fetchone()
+        try:
+            # Normalfall: items.active existiert
+            row = c.execute(
+                """
+                SELECT COUNT(*)
+                  FROM items
+                 WHERE COALESCE(active, 1) = 1
+                """
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # Fallback: keine active-Spalte -> alle Items zählen
+            row = c.execute("SELECT COUNT(*) FROM items").fetchone()
+
     return bool(row and row[0] > 0)
 
 
