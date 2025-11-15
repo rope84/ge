@@ -1,5 +1,6 @@
 # modules/inventur_db.py
 import datetime
+import sqlite3
 from typing import List, Dict, Optional
 
 import pandas as pd
@@ -24,14 +25,41 @@ def has_any_items() -> bool:
 
 def delete_inventur(inventur_id: int) -> None:
     """
-    Löscht eine Inventur inkl. aller zugehörigen Positionen.
-    Wird nur aus dem Inventur-UI (Admin/Betriebsleiter) aufgerufen.
+    Löscht eine Inventur + zugehörige Positionen.
+    Robust gegenüber unterschiedlichen Tabellennamen
+    (z.B. 'inventur' vs. 'inventuren') und fehlenden Tabellen.
     """
+    from core.db import conn
+
     with conn() as cn:
         c = cn.cursor()
-        # erst die Positionen, dann den Kopf
-        c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
-        c.execute("DELETE FROM inventur WHERE id=?", (inventur_id,))
+
+        # 1) Positions-Tabelle(n) löschen
+        #    zuerst unsere neue Variante, dann ggf. ältere Namen
+        try:
+            c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
+        except sqlite3.OperationalError:
+            # fallback: falls du früher einen anderen Namen verwendet hast
+            try:
+                c.execute(
+                    "DELETE FROM inventurpositionen WHERE inventur_id=?",
+                    (inventur_id,),
+                )
+            except sqlite3.OperationalError:
+                # gar keine passende Tabelle vorhanden -> egal, einfach weitermachen
+                pass
+
+        # 2) Kopf-Tabelle löschen
+        try:
+            c.execute("DELETE FROM inventur WHERE id=?", (inventur_id,))
+        except sqlite3.OperationalError:
+            # fallback: z.B. alte Tabelle 'inventuren'
+            try:
+                c.execute("DELETE FROM inventuren WHERE id=?", (inventur_id,))
+            except sqlite3.OperationalError:
+                # auch hier: wenn nichts existiert, brechen wir nicht ab
+                pass
+
         cn.commit()
 # ---------------------------------------------------------
 # Schema sicherstellen (Inventur-Tabellen)
