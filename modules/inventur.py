@@ -53,6 +53,13 @@ def _inject_styles():
             display: none !important;
         }
 
+        /* Hero-Pille wie beim Login KILLEN */
+        div[style*="linear-gradient"][style*="border-radius: 999px"],
+        div[style*="linear-gradient"][style*="border-radius:999px"],
+        div[style*="background: linear-gradient"][style*="999px"] {
+            display: none !important;
+        }
+
         .inv-hero {
             text-align: left;
             margin-bottom: 24px;
@@ -151,7 +158,6 @@ def _inject_styles():
 def _status_pill(status: str, year: int, month: int) -> str:
     today = datetime.date.today()
     s = (status or "editing").lower()
-    # Überfällig: Monat liegt in der Vergangenheit und nicht freigegeben
     overdue = (year < today.year) or (year == today.year and month < today.month)
 
     if s == "approved":
@@ -178,7 +184,6 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     today = datetime.date.today()
     month_label = calendar.month_name[today.month]
 
-    # None, wenn noch keine Inventur existiert
     current_inv = invdb.get_current_inventur(auto_create=False, username=username)
 
     st.markdown("### Aktuelle Inventur")
@@ -406,6 +411,7 @@ def render_inventur(username: str = "unknown", role: str = "guest"):
     _inject_styles()
 
     scope = st.session_state.get("scope", "")
+
     if not _has_inventur_right(role, scope):
         st.error("Keine Berechtigung für die Inventur.")
         return
@@ -425,12 +431,14 @@ def render_inventur(username: str = "unknown", role: str = "guest"):
         unsafe_allow_html=True,
     )
 
-    # Layout: links aktuelle Inventur, rechts Historie
     left, right = st.columns([2, 1.4])
 
-    # Reviewer-Flag: Admin oder Funktionen mit 'betriebsleiter'
-    is_reviewer = (role or "").lower() == "admin" or "betriebsleiter" in _parse_functions(
-        scope
+    # Reviewer-Flag: Admin oder Functions enthält 'admin' oder 'betriebsleiter'
+    funcs = _parse_functions(scope)
+    is_reviewer = (
+        (role or "").lower() == "admin"
+        or "admin" in funcs
+        or "betriebsleiter" in funcs
     )
 
     with left:
