@@ -39,7 +39,18 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* PILLE / komische Gradient-Bubble entfernen (wie im Login) */
+        /* === Streamlit-Deko / Pille killen (wie im Login) =================== */
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stCloudAppStatus"],
+        header [data-testid="stToolbar"],
+        header [data-testid="stHeaderActionButtons"],
+        header [data-testid="stActionButton"],
+        .stDeployButton,
+        .viewerBadge_container__r3R7,
+        button[title="Manage app"],
+        button[title="View source"],
+        /* Fallback: gradient-Pille mit riesigem border-radius */
         div[style*="linear-gradient"][style*="999px"],
         div[style*="linear-gradient"][style*="border-radius: 999px"],
         div[style*="linear-gradient"][style*="border-radius:999px"] {
@@ -139,8 +150,6 @@ def _inject_styles():
         """,
         unsafe_allow_html=True,
     )
-
-
 def _status_pill(status: str, year: int, month: int) -> str:
     today = datetime.date.today()
     s = (status or "editing").lower()
