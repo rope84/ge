@@ -64,12 +64,12 @@ def migrate():
             last_name   TEXT DEFAULT ''
         );
         """)
-        _add_column_if_missing(c, "users", "passhash",  "TEXT NOT NULL DEFAULT ''")
-        _add_column_if_missing(c, "users", "role",      "TEXT NOT NULL DEFAULT 'user'")
-        _add_column_if_missing(c, "users", "scope",     "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "email",     "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "first_name","TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "passhash",   "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(c, "users", "role",       "TEXT NOT NULL DEFAULT 'user'")
+        _add_column_if_missing(c, "users", "scope",      "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "email",      "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "last_name",  "TEXT DEFAULT ''")
 
         # --- EMPLOYEES ---
         c.execute("""
@@ -83,22 +83,18 @@ def migrate():
         );
         """)
 
-        # --- INVENTUR ---
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS inventur_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            jahr        INTEGER NOT NULL,
-            monat       INTEGER NOT NULL,
-            kategorie   TEXT DEFAULT '',
-            artikel     TEXT NOT NULL,
-            ek_netto    REAL NOT NULL DEFAULT 0,
-            stand       REAL NOT NULL DEFAULT 0,
-            gesamt_netto REAL NOT NULL DEFAULT 0,
-            last_edit_ts   TEXT DEFAULT '',
-            last_edit_user TEXT DEFAULT ''
-        );
-        """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_inv_year_month ON inventur_items(jahr,monat)")
+        # --- LEGACY-INVENTUR aufräumen (alte Struktur mit jahr/monat/artikel) ---
+        # Falls es noch eine alte inventur_items-Tabelle mit Spalten 'jahr'/'artikel' gibt,
+        # benennen wir sie um und überlassen die neue Struktur modules.inventur_db.ensure_inventur_schema().
+        try:
+            c.execute("PRAGMA table_info(inventur_items)")
+            cols = [row[1] for row in c.fetchall()]
+            if cols and ("jahr" in cols or "artikel" in cols):
+                # Alte Struktur -> umbenennen, damit neue Tabellen sauber angelegt werden können
+                c.execute("ALTER TABLE inventur_items RENAME TO inventur_items_legacy")
+        except sqlite3.OperationalError:
+            # Tabelle existiert nicht -> egal
+            pass
 
         # --- DAILY (Tagesabrechnung für Dashboard) ---
         # Minimal-Schema; du kannst später beliebig Spalten ergänzen (idempotent).
@@ -124,8 +120,17 @@ def migrate():
         );
         """)
 
+        # --- NEUE INVENTUR-STRUKTUR anlegen (inventur_months + inventur_items) ---
+        # wird von modules.inventur_db.ensure_inventur_schema() erledigt
+        try:
+            from modules import inventur_db as invdb
+            invdb.ensure_inventur_schema()
+        except Exception as e:
+            # Inventur-Schema darf den Start nicht killen; Fehler nur loggen.
+            print(f"[WARNUNG] Inventur-Schema konnte nicht aktualisiert werden: {e}")
+
         # --- Schema-Version ---
-        target_ver = 2  # <-- Version erhöht, damit Migration sicher läuft
+        target_ver = 3  # Version erhöht, damit Migration sicher läuft
         if ver < target_ver:
             _set_version(c, target_ver)
 
