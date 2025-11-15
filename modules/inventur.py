@@ -194,7 +194,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
                 st.success(
                     "Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen."
                 )
-                st.experimental_rerun()
+                st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
             return
@@ -265,14 +265,14 @@ def _render_current_inventur(username: str, is_reviewer: bool):
                 current_inv["id"], edited_df, username, submit=False
             )
             st.success("Inventur wurde zwischengespeichert.")
-            st.experimental_rerun()
+            st.rerun()
 
         if submit_btn:
             invdb.save_inventur_counts(
                 current_inv["id"], edited_df, username, submit=True
             )
             st.success("Inventur eingereicht. Ein Betriebsleiter/Admin muss freigeben.")
-            st.experimental_rerun()
+            st.rerun()
 
         if approve_btn:
             invdb.save_inventur_counts(
@@ -280,7 +280,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             )
             invdb.approve_inventur(current_inv["id"], username)
             st.success("Inventur wurde freigegeben.")
-            st.experimental_rerun()
+            st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
