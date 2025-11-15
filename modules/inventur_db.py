@@ -7,67 +7,13 @@ import pandas as pd
 from core.db import conn
 
 
-def has_any_items() -> bool:
-    """
-    Prüft, ob überhaupt Artikel im Artikelstamm vorhanden sind.
-    - Wenn es eine Spalte 'active' gibt, werden nur aktive gezählt.
-    - Wenn nicht, werden alle Zeilen in 'items' gezählt.
-    """
-    with conn() as cn:
-        c = cn.cursor()
-        try:
-            # Normalfall: items.active existiert
-            row = c.execute(
-                """
-                SELECT COUNT(*)
-                  FROM items
-                 WHERE COALESCE(active, 1) = 1
-                """
-            ).fetchone()
-        except sqlite3.OperationalError:
-            # Fallback: keine active-Spalte -> alle Items zählen
-            row = c.execute("SELECT COUNT(*) FROM items").fetchone()
-
-    return bool(row and row[0] > 0)
-
-
-def delete_inventur(inventur_id: int) -> None:
-    """
-    Löscht eine Inventur + zugehörige Positionen auf Basis des
-    neuen Schemas:
-
-      - Kopf:  inventur_months
-      - Items: inventur_items
-    """
-    ensure_inventur_schema()
-    with conn() as cn:
-        c = cn.cursor()
-
-        # Detailzeilen zuerst löschen
-        c.execute(
-            "DELETE FROM inventur_items WHERE inventur_id=?",
-            (inventur_id,),
-        )
-
-        # Kopfzeile löschen
-        c.execute(
-            "DELETE FROM inventur_months WHERE id=?",
-            (inventur_id,),
-        )
-
-        cn.commit()
-
-    # Audit – wenn die Tabellen fehlen sollten, darf das nie crashen
-    log_audit("system", "inventur_delete", f"inventur_id={inventur_id}")
-
-
 # ---------------------------------------------------------
-# Schema sicherstellen (Inventur-Tabellen)
+# Helper: robustes Inventur-Schema
 # ---------------------------------------------------------
 def ensure_inventur_schema() -> None:
     """
     Stellt sicher, dass die Tabellen für die Monatsinventur existieren
-    und alle benötigten Spalten vorhanden sind.
+    und nicht in alten, inkompatiblen Strukturen verbleiben.
     - inventur_months
     - inventur_items
     """
@@ -93,7 +39,6 @@ def ensure_inventur_schema() -> None:
             )
             """
         )
-
         cols_head = {r[1] for r in c.execute("PRAGMA table_info(inventur_months)").fetchall()}
 
         def _add_head(col: str, ddl: str) -> None:
@@ -110,6 +55,7 @@ def ensure_inventur_schema() -> None:
         _add_head("updated_at", "updated_at TEXT")
 
         # Detail-Tabelle für Artikelmengen
+        # Erkennen, ob eine alte inkompatible Struktur existiert
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS inventur_items (
@@ -124,8 +70,27 @@ def ensure_inventur_schema() -> None:
             )
             """
         )
-
         cols_items = {r[1] for r in c.execute("PRAGMA table_info(inventur_items)").fetchall()}
+
+        # Wenn eine alte Tabelle mit Spalten wie 'jahr' oder 'artikel' existiert,
+        # ist sie nicht kompatibel -> wir droppen sie einmalig und bauen frisch.
+        if "jahr" in cols_items or "artikel" in cols_items:
+            c.execute("DROP TABLE IF EXISTS inventur_items")
+            c.execute(
+                """
+                CREATE TABLE inventur_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inventur_id INTEGER,
+                    item_id INTEGER,
+                    counted_qty REAL NOT NULL DEFAULT 0,
+                    purchase_price REAL NOT NULL DEFAULT 0,
+                    total_value REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT,
+                    updated_by TEXT
+                )
+                """
+            )
+            cols_items = {r[1] for r in c.execute("PRAGMA table_info(inventur_items)").fetchall()}
 
         def _add_it(col: str, ddl: str) -> None:
             if col not in cols_items:
@@ -143,12 +108,29 @@ def ensure_inventur_schema() -> None:
 
 
 # ---------------------------------------------------------
-# Helper: Audit-Log schreiben
+# Artikelstamm / Vorbedingungen
+# ---------------------------------------------------------
+def has_any_items() -> bool:
+    """
+    Prüft, ob überhaupt Artikel im Artikelstamm vorhanden sind.
+    Nutzt die Tabelle 'items'. Kein Zwang zu 'active'-Spalten.
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        try:
+            row = c.execute("SELECT COUNT(*) FROM items").fetchone()
+        except sqlite3.OperationalError:
+            # Tabelle existiert gar nicht
+            return False
+    return bool(row and row[0] > 0)
+
+
+# ---------------------------------------------------------
+# Audit-Log
 # ---------------------------------------------------------
 def log_audit(username: str, action: str, details: str) -> None:
     """
-    Schreibt einen Eintrag in die bestehende audit_log-Tabelle,
-    falls sie existiert.
+    Schreibt einen Eintrag in die bestehende audit_log-Tabelle (falls nicht da, wird sie angelegt).
     """
     ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
     try:
@@ -176,7 +158,7 @@ def log_audit(username: str, action: str, details: str) -> None:
 
 
 # ---------------------------------------------------------
-# Helper: Business-Name (für UI)
+# Business-Name (für UI)
 # ---------------------------------------------------------
 def get_business_name() -> str:
     """
@@ -196,14 +178,46 @@ def get_business_name() -> str:
 
 
 # ---------------------------------------------------------
+# Inventur löschen (für Admin / Reviewer)
+# ---------------------------------------------------------
+def delete_inventur(inventur_id: int) -> None:
+    """
+    Löscht eine Inventur + Positionen, robust gegenüber älteren Tabellennamen.
+    """
+    ensure_inventur_schema()
+    with conn() as cn:
+        c = cn.cursor()
+
+        # Positionen
+        try:
+            c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
+        except sqlite3.OperationalError:
+            pass
+
+        # Kopf
+        try:
+            c.execute("DELETE FROM inventur_months WHERE id=?", (inventur_id,))
+        except sqlite3.OperationalError:
+            # alte Namen tolerieren
+            try:
+                c.execute("DELETE FROM inventur WHERE id=?", (inventur_id,))
+            except sqlite3.OperationalError:
+                try:
+                    c.execute("DELETE FROM inventuren WHERE id=?", (inventur_id,))
+                except sqlite3.OperationalError:
+                    pass
+
+        cn.commit()
+
+
+# ---------------------------------------------------------
 # Inventur-API
 # ---------------------------------------------------------
 def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
     """
     Liefert die Inventur für das aktuelle Monat.
     - auto_create=False: liefert None, wenn noch keine existiert
-    - auto_create=True: legt bei Bedarf eine neue Inventur an und befüllt sie mit allen Artikeln aus items.
-      Berücksichtigt alte Schemas (z.B. Spalten 'jahr' / 'monat' in inventur_items).
+    - auto_create=True: legt bei Bedarf eine neue Inventur an und befüllt sie mit allen Artikeln aus items
     """
     ensure_inventur_schema()
     today = datetime.date.today()
@@ -211,8 +225,6 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
 
     with conn() as cn:
         c = cn.cursor()
-
-        # Prüfen, ob für dieses Jahr/Monat schon eine Inventur existiert
         row = c.execute(
             """
             SELECT id, year, month, status, created_at, created_by,
@@ -238,11 +250,10 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
                 "updated_at": row[10] or "",
             }
 
-        # Noch keine Inventur vorhanden
         if not auto_create:
             return None
 
-        # Neue Kopfzeile anlegen
+        # Neue Inventur anlegen
         now = datetime.datetime.now().isoformat(timespec="seconds")
         c.execute(
             """
@@ -255,66 +266,37 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
         )
         inv_id = c.lastrowid
 
-        # Artikelstamm holen
+        # Artikelstamm in inventur_items übernehmen
         items = c.execute(
             "SELECT id, name, purchase_price FROM items ORDER BY name COLLATE NOCASE"
         ).fetchall()
 
-        # Wenn es (noch) keine Artikel gibt -> nur Kopf anlegen, keine Positionszeilen
-        if not items:
-            cn.commit()
-            log_audit(username, "inventur_create_empty", f"year={year}, month={month}, inventur_id={inv_id}")
-            return {
-                "id": inv_id,
-                "year": year,
-                "month": month,
-                "status": "editing",
-                "created_at": now,
-                "created_by": username,
-                "submitted_at": "",
-                "submitted_by": "",
-                "approved_at": "",
-                "approved_by": "",
-                "updated_at": now,
-            }
-
-        # Schema von inventur_items abfragen (wegen alter Spalten wie 'jahr'/'monat')
-        cols_items = {r[1] for r in c.execute("PRAGMA table_info(inventur_items)").fetchall()}
-        has_jahr = "jahr" in cols_items
-        has_monat = "monat" in cols_items or "month" in cols_items  # falls du mal 'month' verwendet hast
-
-        # Dynamische Spaltenliste bauen
-        base_cols = ["inventur_id", "item_id", "counted_qty", "purchase_price", "total_value"]
-        if has_jahr:
-            base_cols.append("jahr")
-        if has_monat:
-            base_cols.append("monat")
-        base_cols.extend(["updated_at", "updated_by"])
-
-        placeholders = ", ".join(["?"] * len(base_cols))
-        cols_sql = ", ".join(base_cols)
-
-        sql = f"INSERT INTO inventur_items({cols_sql}) VALUES ({placeholders})"
-
-        rows: list[tuple] = []
+        rows = []
         for item_id, name, price in items:
             price = float(price or 0)
-            vals = [
-                inv_id,       # inventur_id
-                item_id,      # item_id
-                0.0,          # counted_qty
-                price,        # purchase_price
-                0.0,          # total_value
-            ]
-            if has_jahr:
-                vals.append(year)
-            if has_monat:
-                vals.append(month)
-            vals.extend([now, username])  # updated_at, updated_by
-            rows.append(tuple(vals))
+            rows.append(
+                (
+                    inv_id,
+                    item_id,
+                    0.0,    # counted_qty
+                    price,  # purchase_price
+                    0.0,    # total_value
+                    now,
+                    username,
+                )
+            )
 
         if rows:
-            c.executemany(sql, rows)
+            c.executemany(
+                """
+                INSERT INTO inventur_items(
+                    inventur_id, item_id, counted_qty, purchase_price, total_value,
+                    updated_at, updated_by
+                )
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                rows,
+            )
 
         cn.commit()
 
@@ -333,6 +315,7 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
             "approved_by": "",
             "updated_at": now,
         }
+
 
 def load_inventur_items_df(inventur_id: int) -> pd.DataFrame:
     """
