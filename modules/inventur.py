@@ -1,416 +1,396 @@
-# modules/inventur_db.py
+# modules/inventur.py
+import calendar
 import datetime
-from typing import Optional, List, Dict
+from typing import List
 
-import pandas as pd
-from core.db import conn
+import streamlit as st
+
+from core.config import APP_NAME, APP_VERSION
+from . import inventur_db as invdb  # relativer Import innerhalb des Pakets "modules"
 
 
 # ---------------------------------------------------------
-# Schema-Helfer
+# Rechte / Funktionen
 # ---------------------------------------------------------
-def _ensure_schema() -> None:
+def _parse_functions(scope: str) -> List[str]:
+    return [f.strip().lower() for f in (scope or "").split(",") if f.strip()]
+
+
+def _has_inventur_right(role: str, scope: str) -> bool:
     """
-    Stellt sicher, dass die Tabellen für Inventur existieren
-    und alle benötigten Spalten haben (inkl. jahr/monat in inventur_items).
+    Admin & Betriebsleiter sehen immer Inventur.
+    Zusätzlich jeder, dessen Functions 'inventur' enthält.
     """
-    with conn() as cn:
-        c = cn.cursor()
-
-        # Haupttabelle für Inventuren
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS inventur (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                year INTEGER NOT NULL DEFAULT 0,
-                month INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'editing',
-                created_by TEXT,
-                created_at TEXT,
-                submitted_by TEXT,
-                submitted_at TEXT,
-                approved_by TEXT,
-                approved_at TEXT
-            )
-            """
-        )
-
-        # Items je Inventur
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS inventur_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                inventur_id INTEGER NOT NULL,
-                item_id INTEGER,
-                item_name TEXT NOT NULL,
-                counted_qty REAL NOT NULL DEFAULT 0,
-                purchase_price REAL NOT NULL DEFAULT 0,
-                total_value REAL NOT NULL DEFAULT 0,
-                jahr INTEGER NOT NULL DEFAULT 0,
-                monat INTEGER NOT NULL DEFAULT 0,
-                changed_by TEXT,
-                changed_at TEXT
-            )
-            """
-        )
-
-        # Meta-Tabelle (für Betriebsname etc.)
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-            """
-        )
-
-        # Bestehende Spalten prüfen & ggf. ergänzen (robust bei älteren DBs)
-        def _add_column(table: str, col: str, ddl: str):
-            cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
-            if col not in cols:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
-
-        # Inventur-Spalten absichern
-        _add_column("inventur", "year", "year INTEGER NOT NULL DEFAULT 0")
-        _add_column("inventur", "month", "month INTEGER NOT NULL DEFAULT 0")
-        _add_column("inventur", "status", "status TEXT NOT NULL DEFAULT 'editing'")
-        _add_column("inventur", "created_by", "created_by TEXT")
-        _add_column("inventur", "created_at", "created_at TEXT")
-        _add_column("inventur", "submitted_by", "submitted_by TEXT")
-        _add_column("inventur", "submitted_at", "submitted_at TEXT")
-        _add_column("inventur", "approved_by", "approved_by TEXT")
-        _add_column("inventur", "approved_at", "approved_at TEXT")
-
-        # Inventur-Items Spalten absichern (insb. jahr/monat!)
-        _add_column("inventur_items", "inventur_id", "inventur_id INTEGER NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "item_id", "item_id INTEGER")
-        _add_column("inventur_items", "item_name", "item_name TEXT NOT NULL DEFAULT ''")
-        _add_column("inventur_items", "counted_qty", "counted_qty REAL NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "purchase_price", "purchase_price REAL NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "total_value", "total_value REAL NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "jahr", "jahr INTEGER NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "monat", "monat INTEGER NOT NULL DEFAULT 0")
-        _add_column("inventur_items", "changed_by", "changed_by TEXT")
-        _add_column("inventur_items", "changed_at", "changed_at TEXT")
-
-        # Backfill: keine NULLs, damit NOT NULL nicht kracht
-        c.execute("UPDATE inventur_items SET jahr  = COALESCE(jahr, 0)")
-        c.execute("UPDATE inventur_items SET monat = COALESCE(monat, 0)")
-        c.execute("UPDATE inventur_items SET counted_qty   = COALESCE(counted_qty, 0)")
-        c.execute("UPDATE inventur_items SET purchase_price= COALESCE(purchase_price, 0)")
-        c.execute("UPDATE inventur_items SET total_value   = COALESCE(total_value, 0)")
-
-        cn.commit()
+    r = (role or "").lower()
+    funcs = _parse_functions(scope)
+    if r == "admin":
+        return True
+    if "admin" in funcs or "betriebsleiter" in funcs:
+        return True
+    if "inventur" in funcs or "inventur bearbeiten" in funcs:
+        return True
+    return False
 
 
 # ---------------------------------------------------------
-# Hilfen: Betriebsname
+# UI-Styles
 # ---------------------------------------------------------
-def get_business_name() -> str:
-    _ensure_schema()
-    try:
-        with conn() as cn:
-            c = cn.cursor()
-            row = c.execute(
-                "SELECT value FROM meta WHERE key='business_name'"
-            ).fetchone()
-        if row and (row[0] or "").strip():
-            return row[0].strip()
-    except Exception:
-        pass
-    return "Gastro Essentials"
-
-
-# ---------------------------------------------------------
-# Artikelstamm laden (für erste Inventur)
-# ---------------------------------------------------------
-def _load_master_items(c) -> List[tuple]:
-    """
-    Versucht den Artikelstamm zu laden.
-    Gibt Liste von Tuples (item_id, item_name, purchase_price) zurück.
-    Versucht mehrere mögliche Tabellennamen/Spalten – bricht aber nicht die App,
-    wenn nichts gefunden wird.
-    """
-    candidates = [
-        # (sql, description)
-        ("SELECT id, name, einkaufspreis FROM items", "items (name/einkaufspreis)"),
-        ("SELECT id, name, purchase_price FROM items", "items (purchase_price)"),
-        ("SELECT id, artikelname, einkaufspreis FROM artikel", "artikel (artikelname/einkaufspreis)"),
-    ]
-    for sql, _desc in candidates:
-        try:
-            rows = c.execute(sql).fetchall()
-            if rows:
-                return rows
-        except Exception:
-            continue
-    return []
-
-
-# ---------------------------------------------------------
-# Inventur: aktueller Monat
-# ---------------------------------------------------------
-def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
-    """
-    Holt (und optional erstellt) die Inventur des aktuellen Monats.
-    Rückgabe: Dict mit keys: id, year, month, status, created_by, created_at, ...
-    """
-    _ensure_schema()
-    today = datetime.date.today()
-    year, month = today.year, today.month
-    now = datetime.datetime.utcnow().isoformat()
-
-    with conn() as cn:
-        c = cn.cursor()
-
-        # Gibt es schon eine Inventur für diesen Monat?
-        row = c.execute(
-            """
-            SELECT id, year, month, status, created_by, created_at,
-                   submitted_by, submitted_at, approved_by, approved_at
-              FROM inventur
-             WHERE year=? AND month=?
-             LIMIT 1
-            """,
-            (year, month),
-        ).fetchone()
-
-        if row:
-            return {
-                "id": row[0],
-                "year": row[1],
-                "month": row[2],
-                "status": row[3],
-                "created_by": row[4],
-                "created_at": row[5],
-                "submitted_by": row[6],
-                "submitted_at": row[7],
-                "approved_by": row[8],
-                "approved_at": row[9],
-            }
-
-        if not auto_create:
-            return None
-
-        # Neue Inventur anlegen
-        c.execute(
-            """
-            INSERT INTO inventur(year, month, status, created_by, created_at)
-            VALUES(?,?,?,?,?)
-            """,
-            (year, month, "editing", username or "", now),
-        )
-        inv_id = c.lastrowid
-
-        # Items aus Artikelstamm übernehmen
-        master_items = _load_master_items(c)
-
-        rows = []
-        for item_id, item_name, purchase_price in master_items:
-            pp = float(purchase_price or 0)
-            rows.append(
-                (
-                    inv_id,
-                    int(item_id),
-                    str(item_name or ""),
-                    0.0,           # counted_qty
-                    pp,            # purchase_price
-                    0.0,           # total_value
-                    year,
-                    month,
-                    username or "",
-                    now,
-                )
-            )
-
-        if rows:
-            c.executemany(
-                """
-                INSERT INTO inventur_items(
-                    inventur_id,
-                    item_id,
-                    item_name,
-                    counted_qty,
-                    purchase_price,
-                    total_value,
-                    jahr,
-                    monat,
-                    changed_by,
-                    changed_at
-                )
-                VALUES(?,?,?,?,?,?,?,?,?,?)
-                """,
-                rows,
-            )
-
-        cn.commit()
-
-        return {
-            "id": inv_id,
-            "year": year,
-            "month": month,
-            "status": "editing",
-            "created_by": username or "",
-            "created_at": now,
-            "submitted_by": None,
-            "submitted_at": None,
-            "approved_by": None,
-            "approved_at": None,
+def _inject_styles():
+    st.markdown(
+        """
+        <style>
+        /* PILLE / komische Gradient-Bubble entfernen (wie im Login) */
+        div[style*="linear-gradient"][style*="999px"],
+        div[style*="linear-gradient"][style*="border-radius: 999px"],
+        div[style*="linear-gradient"][style*="border-radius:999px"] {
+            display: none !important;
         }
 
+        .inv-hero {
+            text-align: left;
+            margin-bottom: 24px;
+        }
+        .inv-title {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #f9fafb;
+            margin-bottom: 4px;
+        }
+        .inv-sub {
+            font-size: .9rem;
+            color: #e5e7eb;
+            opacity: .8;
+            margin-bottom: 2px;
+        }
+        .inv-mini {
+            font-size: .78rem;
+            color: #9ca3af;
+            opacity: .8;
+        }
+
+        .inv-card {
+            border-radius: 18px;
+            padding: 18px 18px 14px 18px;
+            background: radial-gradient(400px 220px at 0% 0%, rgba(56,189,248,0.18), transparent),
+                        radial-gradient(600px 260px at 120% 0%, rgba(56,189,248,0.06), transparent),
+                        rgba(15,23,42,0.96);
+            box-shadow: 0 18px 45px rgba(0,0,0,0.55);
+            border: 1px solid rgba(148,163,184,0.35);
+        }
+
+        .inv-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            border: 1px solid rgba(148,163,184,0.45);
+            color: #e5e7eb;
+            background: rgba(15,23,42,0.8);
+            margin-bottom: 8px;
+        }
+
+        .inv-status-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .inv-status-open {
+            background: rgba(59,130,246,0.15);
+            color: #bfdbfe;
+            border: 1px solid rgba(59,130,246,0.55);
+        }
+        .inv-status-submitted {
+            background: rgba(245,158,11,0.15);
+            color: #fed7aa;
+            border: 1px solid rgba(245,158,11,0.55);
+        }
+        .inv-status-approved {
+            background: rgba(22,163,74,0.18);
+            color: #bbf7d0;
+            border: 1px solid rgba(22,163,74,0.55);
+        }
+        .inv-status-overdue {
+            background: rgba(239,68,68,0.15);
+            color: #fecaca;
+            border: 1px solid rgba(239,68,68,0.6);
+        }
+
+        .inv-history-card {
+            border-radius: 14px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            background: rgba(15,23,42,0.85);
+            border: 1px solid rgba(55,65,81,0.8);
+        }
+        .inv-history-header {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            font-size:0.9rem;
+            margin-bottom:2px;
+        }
+        .inv-history-meta {
+            font-size:0.78rem;
+            opacity:.75;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _status_pill(status: str, year: int, month: int) -> str:
+    today = datetime.date.today()
+    s = (status or "editing").lower()
+    # Überfällig: Monat liegt in der Vergangenheit und nicht freigegeben
+    overdue = (year < today.year) or (year == today.year and month < today.month)
+
+    if s == "approved":
+        cls, label = "inv-status-approved", "Freigegeben"
+    elif s == "submitted":
+        cls, label = "inv-status-submitted", "Zur Freigabe eingereicht"
+    elif overdue:
+        cls, label = "inv-status-overdue", "Überfällig"
+    else:
+        cls, label = "inv-status-open", "In Bearbeitung"
+
+    return f"<span class='inv-status-pill {cls}'>{label}</span>"
+
 
 # ---------------------------------------------------------
-# Items einer Inventur laden (für UI)
+# Aktuelle Inventur (Editor)
 # ---------------------------------------------------------
-def load_inventur_items_df(inventur_id: int) -> pd.DataFrame:
-    _ensure_schema()
-    with conn() as cn:
-        df = pd.read_sql(
-            """
-            SELECT
-                id,
-                inventur_id,
-                item_id,
-                item_name,
-                counted_qty,
-                purchase_price,
-                total_value,
-                jahr,
-                monat
-              FROM inventur_items
-             WHERE inventur_id=?
-             ORDER BY item_name COLLATE NOCASE
-            """,
-            cn,
-            params=(inventur_id,),
+def _render_current_inventur(username: str, is_reviewer: bool):
+    """
+    Zeigt/erstellt die Inventur für das aktuelle Monat.
+    - normale User: Mengen eintragen, einreichen
+    - Reviewer (Admin/Betriebsleiter): Überblick + ggf. Freigabe
+    """
+    today = datetime.date.today()
+    month_label = calendar.month_name[today.month]
+
+    # None, wenn noch keine Inventur existiert
+    current_inv = invdb.get_current_inventur(auto_create=False, username=username)
+
+    st.markdown("### Aktuelle Inventur")
+
+    with st.container():
+        st.markdown("<div class='inv-card'>", unsafe_allow_html=True)
+
+        if not current_inv:
+            st.markdown(
+                f"**Noch keine Inventur für {month_label} {today.year} angelegt.**"
+            )
+            if st.button(
+                f"📦 Inventur für {month_label} {today.year} starten",
+                type="primary",
+                use_container_width=True,
+            ):
+                current_inv = invdb.get_current_inventur(
+                    auto_create=True, username=username
+                )
+                st.success(
+                    "Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen."
+                )
+                st.experimental_rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+
+        # Meta + Status
+        status_html = _status_pill(
+            current_inv["status"],
+            current_inv["year"],
+            current_inv["month"],
         )
-    return df
+        st.markdown(
+            f"""
+            <div class="inv-history-header">
+                <div>
+                    <span class="inv-badge">
+                        Inventur {month_label} {current_inv['year']}
+                    </span>
+                </div>
+                <div>{status_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Daten laden
+        df_items = invdb.load_inventur_items_df(current_inv["id"])
+
+        if df_items.empty:
+            st.caption("Keine Artikel gefunden. Bitte Artikelstamm im Admin-Cockpit prüfen.")
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+
+        # Nur Artikelname + Menge anzeigen; Preise laufen „unsichtbar“ mit.
+        df_display = df_items.copy()
+
+        st.caption(
+            "Bitte für alle Artikel die physisch gezählte Menge eintragen (0 ist erlaubt)."
+        )
+
+        edited_df = st.data_editor(
+            df_display,
+            column_order=["item_name", "counted_qty"],
+            column_config={
+                "item_name": st.column_config.TextColumn("Artikel", disabled=True),
+                "counted_qty": st.column_config.NumberColumn(
+                    "Gezählte Menge", min_value=0.0, step=1.0
+                ),
+            },
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+        )
+
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            save_btn = st.button("💾 Zwischenspeichern", use_container_width=True)
+        with col2:
+            submit_btn = st.button("✅ Inventur einreichen", use_container_width=True)
+        with col3:
+            approve_btn = False
+            if is_reviewer and current_inv["status"] in ("submitted", "editing"):
+                approve_btn = st.button(
+                    "🔓 Inventur freigeben", use_container_width=True
+                )
+
+        if save_btn:
+            invdb.save_inventur_counts(
+                current_inv["id"], edited_df, username, submit=False
+            )
+            st.success("Inventur wurde zwischengespeichert.")
+            st.experimental_rerun()
+
+        if submit_btn:
+            invdb.save_inventur_counts(
+                current_inv["id"], edited_df, username, submit=True
+            )
+            st.success("Inventur eingereicht. Ein Betriebsleiter/Admin muss freigeben.")
+            st.experimental_rerun()
+
+        if approve_btn:
+            invdb.save_inventur_counts(
+                current_inv["id"], edited_df, username, submit=True
+            )
+            invdb.approve_inventur(current_inv["id"], username)
+            st.success("Inventur wurde freigegeben.")
+            st.experimental_rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------
-# Inventur-Werte speichern / einreichen
+# History / Rückblick
 # ---------------------------------------------------------
-def save_inventur_counts(
-    inventur_id: int,
-    df_items: pd.DataFrame,
-    username: str,
-    submit: bool = False,
-) -> None:
-    _ensure_schema()
-    now = datetime.datetime.utcnow().isoformat()
+def _render_history():
+    st.markdown("### Inventur-Historie")
 
-    with conn() as cn:
-        c = cn.cursor()
+    all_inv = invdb.list_all_inventuren()
+    if not all_inv:
+        st.caption("Noch keine Inventuren vorhanden.")
+        return
 
-        # Für jede Zeile total_value berechnen & updaten
-        for _, row in df_items.iterrows():
-            item_row_id = int(row["id"])
-            qty = float(row.get("counted_qty", 0) or 0)
-            price = float(row.get("purchase_price", 0) or 0)
-            total = qty * price
+    today = datetime.date.today()
 
-            c.execute(
-                """
-                UPDATE inventur_items
-                   SET counted_qty=?,
-                       purchase_price=?,
-                       total_value=?,
-                       changed_by=?,
-                       changed_at=?
-                 WHERE id=? AND inventur_id=?
-                """,
-                (qty, price, total, username or "", now, item_row_id, inventur_id),
-            )
+    for inv in all_inv:
+        year = inv["year"]
+        month = inv["month"]
+        status = (inv["status"] or "editing").lower()
+        month_label = calendar.month_abbr[month]
 
-        # Status der Inventur anpassen
-        if submit:
-            c.execute(
-                """
-                UPDATE inventur
-                   SET status='submitted',
-                       submitted_by=?,
-                       submitted_at=?
-                 WHERE id=?
-                """,
-                (username or "", now, inventur_id),
-            )
+        total = invdb.get_inventur_total_value(inv["id"])
+
+        overdue = (year < today.year) or (year == today.year and month < today.month)
+        if status == "approved":
+            pill_html = _status_pill(status, year, month)
+        elif overdue:
+            pill_html = _status_pill("overdue", year, month)
         else:
-            c.execute(
-                """
-                UPDATE inventur
-                   SET status='editing'
-                 WHERE id=?
-                """,
-                (inventur_id,),
+            pill_html = _status_pill(status, year, month)
+
+        st.markdown(
+            f"""
+            <div class="inv-history-card">
+              <div class="inv-history-header">
+                <div><strong>{month_label} {year}</strong></div>
+                <div>{pill_html}</div>
+              </div>
+              <div class="inv-history-meta">
+                Wert gesamt: <strong>{total:,.2f} €</strong>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.expander(f"Details anzeigen – {month_label} {year}", expanded=False):
+            df = invdb.load_inventur_items_df(inv["id"])
+            st.dataframe(
+                df[
+                    [
+                        "item_name",
+                        "counted_qty",
+                        "purchase_price",
+                        "total_value",
+                    ]
+                ],
+                use_container_width=True,
+            )
+            csv = df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 CSV exportieren",
+                data=csv,
+                file_name=f"inventur_{year}_{month:02d}.csv",
+                mime="text/csv",
+                use_container_width=True,
             )
 
-        cn.commit()
-
 
 # ---------------------------------------------------------
-# Inventur freigeben
+# Entry-Point für app.py
 # ---------------------------------------------------------
-def approve_inventur(inventur_id: int, username: str) -> None:
-    _ensure_schema()
-    now = datetime.datetime.utcnow().isoformat()
-    with conn() as cn:
-        c = cn.cursor()
-        c.execute(
-            """
-            UPDATE inventur
-               SET status='approved',
-                   approved_by=?,
-                   approved_at=?
-             WHERE id=?
-            """,
-            (username or "", now, inventur_id),
-        )
-        cn.commit()
+def render_inventur(username: str = "unknown", role: str = "guest"):
+    """
+    Entry-Point, wird von app.py via DISPLAY_TO_MODULE aufgerufen.
+    Signatur passt zu deinem route()-Code.
+    """
+    _inject_styles()
 
+    scope = st.session_state.get("scope", "")
+    if not _has_inventur_right(role, scope):
+        st.error("Keine Berechtigung für die Inventur.")
+        return
 
-# ---------------------------------------------------------
-# Übersicht / Historie
-# ---------------------------------------------------------
-def list_all_inventuren() -> List[Dict]:
-    _ensure_schema()
-    with conn() as cn:
-        c = cn.cursor()
-        rows = c.execute(
-            """
-            SELECT id, year, month, status,
-                   created_by, created_at,
-                   submitted_by, submitted_at,
-                   approved_by, approved_at
-              FROM inventur
-             ORDER BY year DESC, month DESC, id DESC
-            """
-        ).fetchall()
+    club_name = invdb.get_business_name()
 
-    out: List[Dict] = []
-    for r in rows:
-        out.append(
-            {
-                "id": r[0],
-                "year": r[1],
-                "month": r[2],
-                "status": r[3],
-                "created_by": r[4],
-                "created_at": r[5],
-                "submitted_by": r[6],
-                "submitted_at": r[7],
-                "approved_by": r[8],
-                "approved_at": r[9],
-            }
-        )
-    return out
+    st.markdown(
+        f"""
+        <div class="inv-hero">
+          <div class="inv-title">Inventur · {club_name}</div>
+          <div class="inv-sub">
+            Monatliche Lagerbestandsaufnahme – schnell, simpel, nachvollziehbar.
+          </div>
+          <div class="inv-mini">{APP_NAME} · v{APP_VERSION}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # Layout: links aktuelle Inventur, rechts Historie
+    left, right = st.columns([2, 1.4])
 
-def get_inventur_total_value(inventur_id: int) -> float:
-    _ensure_schema()
-    with conn() as cn:
-        c = cn.cursor()
-        row = c.execute(
-            "SELECT SUM(total_value) FROM inventur_items WHERE inventur_id=?",
-            (inventur_id,),
-        ).fetchone()
-    return float(row[0] or 0.0)
+    # Reviewer-Flag: Admin oder Funktionen mit 'betriebsleiter'
+    is_reviewer = (role or "").lower() == "admin" or "betriebsleiter" in _parse_functions(
+        scope
+    )
+
+    with left:
+        _render_current_inventur(username, is_reviewer=is_reviewer)
+    with right:
+        _render_history()
