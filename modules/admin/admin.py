@@ -11,6 +11,8 @@ from core.db import BACKUP_DIR, DB_PATH, conn
 from core.ui_theme import page_header, section_title
 from core.config import APP_NAME, APP_VERSION
 from core import auth  # für Pending-Registrierungen
+from core import auth as authmod
+from modules import inventur_db as invdb
 
 # Benutzer-UI (liegt in modules/admin/users_admin.py)
 from .users_admin import render_users_admin
