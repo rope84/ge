@@ -665,6 +665,45 @@ def _render_backup_admin():
         st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
 # ---------------- Haupt-Render ----------------
+def _inv_status_pill(status: str, year: int, month: int) -> str:
+    today = datetime.date.today()
+    s = (status or "editing").lower()
+    overdue = (year < today.year) or (year == today.year and month < today.month)
+
+    if s == "approved":
+        color = "#bbf7d0"
+        bg = "rgba(22,163,74,0.18)"
+        border = "rgba(22,163,74,0.55)"
+        label = "Freigegeben"
+    elif s == "submitted":
+        color = "#fed7aa"
+        bg = "rgba(245,158,11,0.15)"
+        border = "rgba(245,158,11,0.55)"
+        label = "Zur Freigabe eingereicht"
+    elif overdue:
+        color = "#fecaca"
+        bg = "rgba(239,68,68,0.15)"
+        border = "rgba(239,68,68,0.6)"
+        label = "Überfällig"
+    else:
+        color = "#bfdbfe"
+        bg = "rgba(59,130,246,0.15)"
+        border = "rgba(59,130,246,0.55)"
+        label = "In Bearbeitung"
+
+    return f"""
+    <span style="
+        display:inline-block;
+        padding:2px 8px;
+        border-radius:999px;
+        font-size:0.75rem;
+        font-weight:500;
+        background:{bg};
+        color:{color};
+        border:1px solid {border};
+    ">{label}</span>
+    """
+# ---------------- Haupt-Render ----------------
 def render_admin():
     """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
     if st.session_state.get("role") != "admin":
