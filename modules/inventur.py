@@ -197,7 +197,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             type="primary",
             use_container_width=True,
         ):
-            # 👉 Vor dem Anlegen prüfen, ob es überhaupt Artikel gibt
+            # Vor dem Anlegen prüfen, ob es überhaupt Artikel gibt
             if not invdb.has_any_items():
                 st.error("Keine Artikel im Artikelstamm vorhanden. Bitte zuerst Artikel anlegen.")
             else:
@@ -234,8 +234,23 @@ def _render_current_inventur(username: str, is_reviewer: bool):
         # Daten laden
         df_items = invdb.load_inventur_items_df(current_inv["id"])
 
+        df_items = invdb.load_inventur_items_df(current_inv["id"])
+
         if df_items.empty:
             st.caption("Keine Artikel gefunden. Bitte Artikelstamm im Admin-Cockpit prüfen.")
+
+            if is_reviewer:
+                st.warning(
+                    "Als Betriebsleiter/Admin kannst du diese leere Inventur löschen und danach, "
+                    "nachdem Artikel angelegt wurden, eine neue Inventur starten."
+                )
+                col_del, _ = st.columns([1, 3])
+                with col_del:
+                    if st.button("🗑️ Inventur löschen", use_container_width=True):
+                        invdb.delete_inventur(current_inv["id"])
+                        st.success("Inventur wurde gelöscht.")
+                        st.rerun()
+
             st.markdown("</div>", unsafe_allow_html=True)
             return
 
