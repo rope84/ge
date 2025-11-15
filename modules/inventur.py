@@ -6,7 +6,7 @@ from typing import List
 import streamlit as st
 
 from core.config import APP_NAME, APP_VERSION
-from . import inventur_db as invdb  # relativer Import innerhalb des Pakets "modules"
+from . import inventur_db as invdb  # relativer Import innerhalb von "modules"
 
 
 # ---------------------------------------------------------
@@ -39,7 +39,7 @@ def _inject_styles():
     st.markdown(
         """
         <style>
-        /* === Streamlit-Deko / Toolbar etc. =================== */
+        /* Streamlit-Deko / Toolbar / Pille verstecken */
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stCloudAppStatus"],
@@ -49,14 +49,10 @@ def _inject_styles():
         .stDeployButton,
         .viewerBadge_container__r3R7,
         button[title="Manage app"],
-        button[title="View source"] {
-            display: none !important;
-        }
-
-        /* Hero-Pille wie beim Login KILLEN */
+        button[title="View source"],
+        div[style*="linear-gradient"][style*="999px"],
         div[style*="linear-gradient"][style*="border-radius: 999px"],
-        div[style*="linear-gradient"][style*="border-radius:999px"],
-        div[style*="background: linear-gradient"][style*="999px"] {
+        div[style*="linear-gradient"][style*="border-radius:999px"] {
             display: none !important;
         }
 
@@ -158,6 +154,7 @@ def _inject_styles():
 def _status_pill(status: str, year: int, month: int) -> str:
     today = datetime.date.today()
     s = (status or "editing").lower()
+    # Überfällig: Monat liegt in der Vergangenheit und nicht freigegeben
     overdue = (year < today.year) or (year == today.year and month < today.month)
 
     if s == "approved":
@@ -179,7 +176,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     """
     Zeigt/erstellt die Inventur für das aktuelle Monat.
     - normale User: Mengen eintragen, einreichen
-    - Reviewer (Admin/Betriebsleiter): Überblick + ggf. Freigabe/Löschen
+    - Reviewer (Admin/Betriebsleiter): Überblick + ggf. Freigabe / Löschen
     """
     today = datetime.date.today()
     month_label = calendar.month_name[today.month]
@@ -191,7 +188,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     with st.container():
         st.markdown("<div class='inv-card'>", unsafe_allow_html=True)
 
-        # --- Fall: noch keine Inventur für diesen Monat ---
+        # Noch keine Inventur → Button zum Starten
         if not current_inv:
             st.markdown(
                 f"**Noch keine Inventur für {month_label} {today.year} angelegt.**"
@@ -203,24 +200,19 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             ):
                 # Vor dem Anlegen prüfen, ob es überhaupt Artikel gibt
                 if not invdb.has_any_items():
-                    st.error(
-                        "Keine Artikel im Artikelstamm vorhanden. "
-                        "Bitte zuerst Artikel im Admin-Cockpit anlegen."
-                    )
+                    st.error("Keine Artikel im Artikelstamm vorhanden. Bitte zuerst Artikel anlegen.")
                 else:
                     current_inv = invdb.get_current_inventur(
                         auto_create=True,
                         username=username,
                     )
-                    st.success(
-                        "Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen."
-                    )
+                    st.success("Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen.")
                     st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
             return
 
-        # --- Meta + Status ---
+        # Meta + Status
         status_html = _status_pill(
             current_inv["status"],
             current_inv["year"],
@@ -240,19 +232,17 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             unsafe_allow_html=True,
         )
 
-        # --- Daten laden ---
+        # Daten laden
         df_items = invdb.load_inventur_items_df(current_inv["id"])
 
-        # --- Fall: Inventur existiert, aber (noch) keine Artikel ---
+        # Fall: keine Artikelzeilen → Hinweis + (für Admin) Löschbutton
         if df_items.empty:
-            st.caption(
-                "Keine Artikel gefunden. Bitte Artikelstamm im Admin-Cockpit prüfen."
-            )
+            st.caption("Keine Artikel gefunden. Bitte Artikelstamm im Admin-Cockpit prüfen.")
 
             if is_reviewer:
                 st.warning(
-                    "Als Betriebsleiter/Admin kannst du diese leere Inventur löschen und danach, "
-                    "nachdem Artikel angelegt wurden, eine neue Inventur starten."
+                    "Als Betriebsleiter/Admin kannst du diese leere Inventur löschen "
+                    "und danach – nachdem Artikel angelegt wurden – eine neue Inventur starten."
                 )
                 col_del, _ = st.columns([1, 3])
                 with col_del:
@@ -264,7 +254,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             st.markdown("</div>", unsafe_allow_html=True)
             return
 
-        # --- Normale Bearbeitung: Artikelname + Menge ---
+        # Nur Artikelname + Menge anzeigen; Preise laufen „unsichtbar“ mit.
         df_display = df_items.copy()
 
         st.caption(
@@ -285,8 +275,7 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             num_rows="fixed",
         )
 
-        # --- Buttons: Speichern / Einreichen / Freigeben / Löschen ---
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 1.1])
+        col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             save_btn = st.button("💾 Zwischenspeichern", use_container_width=True)
         with col2:
@@ -296,12 +285,6 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             if is_reviewer and current_inv["status"] in ("submitted", "editing"):
                 approve_btn = st.button(
                     "🔓 Inventur freigeben", use_container_width=True
-                )
-        with col4:
-            delete_btn = False
-            if is_reviewer:
-                delete_btn = st.button(
-                    "🗑️ Inventur löschen", use_container_width=True
                 )
 
         if save_btn:
@@ -324,11 +307,6 @@ def _render_current_inventur(username: str, is_reviewer: bool):
             )
             invdb.approve_inventur(current_inv["id"], username)
             st.success("Inventur wurde freigegeben.")
-            st.rerun()
-
-        if delete_btn:
-            invdb.delete_inventur(current_inv["id"])
-            st.success("Inventur wurde gelöscht.")
             st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
@@ -407,11 +385,11 @@ def _render_history():
 def render_inventur(username: str = "unknown", role: str = "guest"):
     """
     Entry-Point, wird von app.py via DISPLAY_TO_MODULE aufgerufen.
+    Signatur passt zu deinem route()-Code.
     """
     _inject_styles()
 
     scope = st.session_state.get("scope", "")
-
     if not _has_inventur_right(role, scope):
         st.error("Keine Berechtigung für die Inventur.")
         return
@@ -431,14 +409,12 @@ def render_inventur(username: str = "unknown", role: str = "guest"):
         unsafe_allow_html=True,
     )
 
+    # Layout: links aktuelle Inventur, rechts Historie
     left, right = st.columns([2, 1.4])
 
-    # Reviewer-Flag: Admin oder Functions enthält 'admin' oder 'betriebsleiter'
-    funcs = _parse_functions(scope)
-    is_reviewer = (
-        (role or "").lower() == "admin"
-        or "admin" in funcs
-        or "betriebsleiter" in funcs
+    # Reviewer-Flag: Admin oder Funktionen mit 'betriebsleiter'
+    is_reviewer = (role or "").lower() == "admin" or "betriebsleiter" in _parse_functions(
+        scope
     )
 
     with left:
