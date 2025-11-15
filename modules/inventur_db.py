@@ -21,6 +21,18 @@ def has_any_items() -> bool:
             """
         ).fetchone()
     return bool(row and row[0] > 0)
+
+def delete_inventur(inventur_id: int) -> None:
+    """
+    Löscht eine Inventur inkl. aller zugehörigen Positionen.
+    Wird nur aus dem Inventur-UI (Admin/Betriebsleiter) aufgerufen.
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        # erst die Positionen, dann den Kopf
+        c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
+        c.execute("DELETE FROM inventur WHERE id=?", (inventur_id,))
+        cn.commit()
 # ---------------------------------------------------------
 # Schema sicherstellen (Inventur-Tabellen)
 # ---------------------------------------------------------
