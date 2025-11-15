@@ -1,4 +1,4 @@
-# db.py
+# core/db.py
 import sqlite3
 import shutil
 import time
@@ -83,21 +83,12 @@ def migrate():
         );
         """)
 
-        # --- LEGACY-INVENTUR aufräumen (alte Struktur mit jahr/monat/artikel) ---
-        # Falls es noch eine alte inventur_items-Tabelle mit Spalten 'jahr'/'artikel' gibt,
-        # benennen wir sie um und überlassen die neue Struktur modules.inventur_db.ensure_inventur_schema().
-        try:
-            c.execute("PRAGMA table_info(inventur_items)")
-            cols = [row[1] for row in c.fetchall()]
-            if cols and ("jahr" in cols or "artikel" in cols):
-                # Alte Struktur -> umbenennen, damit neue Tabellen sauber angelegt werden können
-                c.execute("ALTER TABLE inventur_items RENAME TO inventur_items_legacy")
-        except sqlite3.OperationalError:
-            # Tabelle existiert nicht -> egal
-            pass
+        # ⚠️ WICHTIG:
+        # KEINE Inventur-Tabellen hier mehr!
+        # Die neue Inventur verwendet eigene Tabellen (inv_months / inv_items)
+        # und wird komplett in modules.inventur_db.ensure_inventur_schema() angelegt.
 
         # --- DAILY (Tagesabrechnung für Dashboard) ---
-        # Minimal-Schema; du kannst später beliebig Spalten ergänzen (idempotent).
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,17 +111,8 @@ def migrate():
         );
         """)
 
-        # --- NEUE INVENTUR-STRUKTUR anlegen (inventur_months + inventur_items) ---
-        # wird von modules.inventur_db.ensure_inventur_schema() erledigt
-        try:
-            from modules import inventur_db as invdb
-            invdb.ensure_inventur_schema()
-        except Exception as e:
-            # Inventur-Schema darf den Start nicht killen; Fehler nur loggen.
-            print(f"[WARNUNG] Inventur-Schema konnte nicht aktualisiert werden: {e}")
-
         # --- Schema-Version ---
-        target_ver = 3  # Version erhöht, damit Migration sicher läuft
+        target_ver = 2
         if ver < target_ver:
             _set_version(c, target_ver)
 
