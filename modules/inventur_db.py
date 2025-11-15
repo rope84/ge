@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 from core.db import conn
 
+
 def has_any_items() -> bool:
     """
     Prüft, ob überhaupt Artikel im Artikelstamm vorhanden sind.
@@ -23,44 +24,37 @@ def has_any_items() -> bool:
         ).fetchone()
     return bool(row and row[0] > 0)
 
+
 def delete_inventur(inventur_id: int) -> None:
     """
-    Löscht eine Inventur + zugehörige Positionen.
-    Robust gegenüber unterschiedlichen Tabellennamen
-    (z.B. 'inventur' vs. 'inventuren') und fehlenden Tabellen.
-    """
-    from core.db import conn
+    Löscht eine Inventur + zugehörige Positionen auf Basis des
+    neuen Schemas:
 
+      - Kopf:  inventur_months
+      - Items: inventur_items
+    """
+    ensure_inventur_schema()
     with conn() as cn:
         c = cn.cursor()
 
-        # 1) Positions-Tabelle(n) löschen
-        #    zuerst unsere neue Variante, dann ggf. ältere Namen
-        try:
-            c.execute("DELETE FROM inventur_items WHERE inventur_id=?", (inventur_id,))
-        except sqlite3.OperationalError:
-            # fallback: falls du früher einen anderen Namen verwendet hast
-            try:
-                c.execute(
-                    "DELETE FROM inventurpositionen WHERE inventur_id=?",
-                    (inventur_id,),
-                )
-            except sqlite3.OperationalError:
-                # gar keine passende Tabelle vorhanden -> egal, einfach weitermachen
-                pass
+        # Detailzeilen zuerst löschen
+        c.execute(
+            "DELETE FROM inventur_items WHERE inventur_id=?",
+            (inventur_id,),
+        )
 
-        # 2) Kopf-Tabelle löschen
-        try:
-            c.execute("DELETE FROM inventur WHERE id=?", (inventur_id,))
-        except sqlite3.OperationalError:
-            # fallback: z.B. alte Tabelle 'inventuren'
-            try:
-                c.execute("DELETE FROM inventuren WHERE id=?", (inventur_id,))
-            except sqlite3.OperationalError:
-                # auch hier: wenn nichts existiert, brechen wir nicht ab
-                pass
+        # Kopfzeile löschen
+        c.execute(
+            "DELETE FROM inventur_months WHERE id=?",
+            (inventur_id,),
+        )
 
         cn.commit()
+
+    # Audit – wenn die Tabellen fehlen sollten, darf das nie crashen
+    log_audit("system", "inventur_delete", f"inventur_id={inventur_id}")
+
+
 # ---------------------------------------------------------
 # Schema sicherstellen (Inventur-Tabellen)
 # ---------------------------------------------------------
