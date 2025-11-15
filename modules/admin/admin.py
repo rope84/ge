@@ -1,4 +1,4 @@
-# modules/admin.py
+# modules/admin/admin.py
 import datetime
 from typing import List, Dict
 
@@ -8,7 +8,7 @@ import streamlit as st
 from core.db import conn
 from core.config import APP_NAME, APP_VERSION
 from core import auth as auth_mod
-from . import inventur_db as invdb
+from .. import inventur_db as invdb   # <--- WICHTIG: eine Ebene höher (modules.inventur_db)
 
 
 # ---------------------------------------------------------
@@ -142,13 +142,21 @@ def _inventur_status_pill(inv: Dict) -> str:
 
 
 # ---------------------------------------------------------
-# Sektion: Betrieb (nur grob – Name etc.)
+# Sektion: Betrieb
 # ---------------------------------------------------------
 def _render_section_betrieb():
     st.subheader("Betriebseinstellungen")
 
     with conn() as cn:
         c = cn.cursor()
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS meta(
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
         row = c.execute(
             "SELECT value FROM meta WHERE key='business_name'"
         ).fetchone()
@@ -172,7 +180,7 @@ def _render_section_betrieb():
 
 
 # ---------------------------------------------------------
-# Sektion: Artikel (generische Bearbeitung items)
+# Sektion: Artikel
 # ---------------------------------------------------------
 def _render_section_artikel():
     st.subheader("Artikelstamm")
@@ -188,7 +196,7 @@ def _render_section_artikel():
         st.info("Noch keine Artikel vorhanden. Import oder Anlage im Admin-Cockpit erforderlich.")
         return
 
-    st.caption("Hinweis: Spalten sind generisch. Wichtig für Inventur sind mindestens 'id', 'name', 'purchase_price'.")
+    st.caption("Hinweis: Wichtig für die Inventur sind mindestens 'id', 'name', 'purchase_price'.")
 
     edited = st.data_editor(
         df,
@@ -236,12 +244,6 @@ def _render_section_inventuren():
 
     username = st.session_state.get("username", "") or "admin"
 
-    # Auswahl-Box für Detail-Edit
-    inv_options = {
-        f"{inv['year']}-{inv['month']:02d} ({inv['status']})": inv["id"]
-        for inv in all_inv
-    }
-
     st.markdown("<div class='admin-card'>", unsafe_allow_html=True)
     st.markdown("**Alle Inventuren**", unsafe_allow_html=True)
 
@@ -278,7 +280,7 @@ def _render_section_inventuren():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Detail-Editor, falls Inventur ausgewählt
+    # Detail-Editor
     edit_id = st.session_state.get("admin_inv_edit_id")
     if edit_id:
         st.markdown("---")
@@ -332,7 +334,7 @@ def _render_section_inventuren():
 
 
 # ---------------------------------------------------------
-# Sektion: Benutzer (ohne zweite Navigation)
+# Sektion: Benutzer
 # ---------------------------------------------------------
 def _render_section_users():
     st.subheader("Benutzerverwaltung")
@@ -346,7 +348,7 @@ def _render_section_users():
     if pending_count:
         st.caption(f"🔔 Es gibt {pending_count} offene Registrierungsanfragen.")
 
-    # Pending-Queue (Registrierungen)
+    # Pending-Queue
     with st.expander("Offene Registrierungen anzeigen / bearbeiten", expanded=False):
         try:
             pendings = auth_mod.list_pending_users()
@@ -391,7 +393,7 @@ def _render_section_users():
 
     st.markdown("---")
 
-    # Aktive Benutzer Tabelle
+    # Aktive Benutzer
     st.markdown("**Aktive Benutzer & Rollen**")
 
     with conn() as cn:
@@ -462,7 +464,7 @@ def _render_section_users():
 
 
 # ---------------------------------------------------------
-# Entry-Point für app.py
+# Entry-Point
 # ---------------------------------------------------------
 def render_admin():
     """
@@ -481,8 +483,6 @@ def render_admin():
         unsafe_allow_html=True,
     )
 
-    # Haupt-Navigation innerhalb des Admin-Cockpits
-    # Reihenfolge wie gewünscht: Import – Kategorien – Artikel – Inventuren – Benutzer
     tab_choice = st.radio(
         "Bereich",
         ["Betrieb", "Artikel", "Inventuren", "Benutzer"],
