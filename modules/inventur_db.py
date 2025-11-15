@@ -202,7 +202,8 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
     """
     Liefert die Inventur für das aktuelle Monat.
     - auto_create=False: liefert None, wenn noch keine existiert
-    - auto_create=True: legt bei Bedarf eine neue Inventur an und befüllt sie mit allen Artikeln aus items
+    - auto_create=True: legt bei Bedarf eine neue Inventur an und befüllt sie mit allen Artikeln aus items.
+      Berücksichtigt alte Schemas (z.B. Spalten 'jahr' / 'monat' in inventur_items).
     """
     ensure_inventur_schema()
     today = datetime.date.today()
@@ -210,6 +211,8 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
 
     with conn() as cn:
         c = cn.cursor()
+
+        # Prüfen, ob für dieses Jahr/Monat schon eine Inventur existiert
         row = c.execute(
             """
             SELECT id, year, month, status, created_at, created_by,
@@ -235,10 +238,11 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
                 "updated_at": row[10] or "",
             }
 
+        # Noch keine Inventur vorhanden
         if not auto_create:
             return None
 
-        # Neue Inventur anlegen
+        # Neue Kopfzeile anlegen
         now = datetime.datetime.now().isoformat(timespec="seconds")
         c.execute(
             """
@@ -251,37 +255,66 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
         )
         inv_id = c.lastrowid
 
-        # Artikelstamm in inventur_items übernehmen
+        # Artikelstamm holen
         items = c.execute(
             "SELECT id, name, purchase_price FROM items ORDER BY name COLLATE NOCASE"
         ).fetchall()
 
-        rows = []
+        # Wenn es (noch) keine Artikel gibt -> nur Kopf anlegen, keine Positionszeilen
+        if not items:
+            cn.commit()
+            log_audit(username, "inventur_create_empty", f"year={year}, month={month}, inventur_id={inv_id}")
+            return {
+                "id": inv_id,
+                "year": year,
+                "month": month,
+                "status": "editing",
+                "created_at": now,
+                "created_by": username,
+                "submitted_at": "",
+                "submitted_by": "",
+                "approved_at": "",
+                "approved_by": "",
+                "updated_at": now,
+            }
+
+        # Schema von inventur_items abfragen (wegen alter Spalten wie 'jahr'/'monat')
+        cols_items = {r[1] for r in c.execute("PRAGMA table_info(inventur_items)").fetchall()}
+        has_jahr = "jahr" in cols_items
+        has_monat = "monat" in cols_items or "month" in cols_items  # falls du mal 'month' verwendet hast
+
+        # Dynamische Spaltenliste bauen
+        base_cols = ["inventur_id", "item_id", "counted_qty", "purchase_price", "total_value"]
+        if has_jahr:
+            base_cols.append("jahr")
+        if has_monat:
+            base_cols.append("monat")
+        base_cols.extend(["updated_at", "updated_by"])
+
+        placeholders = ", ".join(["?"] * len(base_cols))
+        cols_sql = ", ".join(base_cols)
+
+        sql = f"INSERT INTO inventur_items({cols_sql}) VALUES ({placeholders})"
+
+        rows: list[tuple] = []
         for item_id, name, price in items:
             price = float(price or 0)
-            rows.append(
-                (
-                    inv_id,
-                    item_id,
-                    0.0,    # counted_qty
-                    price,  # purchase_price
-                    0.0,    # total_value
-                    now,
-                    username,
-                )
-            )
+            vals = [
+                inv_id,       # inventur_id
+                item_id,      # item_id
+                0.0,          # counted_qty
+                price,        # purchase_price
+                0.0,          # total_value
+            ]
+            if has_jahr:
+                vals.append(year)
+            if has_monat:
+                vals.append(month)
+            vals.extend([now, username])  # updated_at, updated_by
+            rows.append(tuple(vals))
 
         if rows:
-            c.executemany(
-                """
-                INSERT INTO inventur_items(
-                    inventur_id, item_id, counted_qty, purchase_price, total_value,
-                    updated_at, updated_by
-                )
-                VALUES (?,?,?,?,?,?,?)
-                """,
-                rows,
-            )
+            c.executemany(sql, rows)
 
         cn.commit()
 
@@ -300,7 +333,6 @@ def get_current_inventur(auto_create: bool, username: str) -> Optional[Dict]:
             "approved_by": "",
             "updated_at": now,
         }
-
 
 def load_inventur_items_df(inventur_id: int) -> pd.DataFrame:
     """
