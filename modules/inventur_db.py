@@ -3,10 +3,24 @@ import datetime
 from typing import List, Dict, Optional
 
 import pandas as pd
-
 from core.db import conn
 
-
+def has_any_items() -> bool:
+    """
+    Prüft, ob überhaupt Artikel im Artikelstamm vorhanden sind.
+    Nutzt die Tabelle 'items' und berücksichtigt optional eine active-Flag,
+    falls es die gibt.
+    """
+    with conn() as cn:
+        c = cn.cursor()
+        row = c.execute(
+            """
+            SELECT COUNT(*)
+              FROM items
+             WHERE COALESCE(active, 1) = 1
+            """
+        ).fetchone()
+    return bool(row and row[0] > 0)
 # ---------------------------------------------------------
 # Schema sicherstellen (Inventur-Tabellen)
 # ---------------------------------------------------------
