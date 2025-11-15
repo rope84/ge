@@ -1,501 +1,718 @@
 # modules/admin/admin.py
-import datetime
-from typing import List, Dict
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import shutil
+import time
+import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Tuple
 
-from core.db import conn
+from core.db import BACKUP_DIR, DB_PATH, conn
+from core.ui_theme import page_header, section_title
 from core.config import APP_NAME, APP_VERSION
-from core import auth as auth_mod
-from .. import inventur_db as invdb   # <--- WICHTIG: eine Ebene höher (modules.inventur_db)
+from core import auth  # für Pending-Registrierungen
 
+# Benutzer-UI (liegt in modules/admin/users_admin.py)
+from .users_admin import render_users_admin
 
-# ---------------------------------------------------------
-# Styles
-# ---------------------------------------------------------
-def _inject_admin_styles():
-    st.markdown(
-        """
-        <style>
-        /* Admin-Hero */
-        .admin-hero {
-            margin-bottom: 18px;
-        }
-        .admin-title {
-            font-size: 1.7rem;
-            font-weight: 700;
-            color: #f9fafb;
-            margin-bottom: 4px;
-        }
-        .admin-sub {
-            font-size: .9rem;
-            color: #e5e7eb;
-            opacity: .8;
-            margin-bottom: 2px;
-        }
-        .admin-mini {
-            font-size: .78rem;
-            color: #9ca3af;
-            opacity: .8;
-        }
+# ---------------- Änderungsnotizen (Default) ----------------
+DEFAULT_CHANGELOG_NOTES = {
+    "Beta 1": [
+        "Neues einheitliches UI-Theme & aufgeräumte Navigation",
+        "Admin-Cockpit mit Startseite & KPIs",
+        "Verbessertes Profil-Modul inkl. Passwort ändern",
+        "Inventur mit Monatslogik & PDF-Export",
+        "Abrechnung poliert: Garderobe-Logik, Voucher-Einbezug",
+        "Datenbank-Backups: manuell, Statusanzeige",
+    ]
+}
 
-        /* Karten */
-        .admin-card {
-            border-radius: 16px;
-            padding: 14px 16px 12px 16px;
-            background: rgba(15,23,42,0.96);
-            border: 1px solid rgba(148,163,184,0.4);
-            box-shadow: 0 16px 40px rgba(0,0,0,0.55);
-            margin-bottom: 12px;
-        }
+# ---------------- Hilfsfunktionen / DB ----------------
+def _table_exists(c, name: str) -> bool:
+    return c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone() is not None
 
-        .admin-pill {
-            display:inline-block;
-            padding: 2px 10px;
-            border-radius: 999px;
-            font-size: .75rem;
-            border:1px solid rgba(148,163,184,.5);
-            color:#e5e7eb;
-            background: rgba(15,23,42,0.9);
-        }
-
-        .admin-status-pill {
-            display:inline-block;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: .75rem;
-            font-weight: 500;
-        }
-        .admin-status-editing {
-            background: rgba(59,130,246,0.15);
-            color: #bfdbfe;
-            border: 1px solid rgba(59,130,246,0.6);
-        }
-        .admin-status-submitted {
-            background: rgba(245,158,11,0.15);
-            color: #fed7aa;
-            border: 1px solid rgba(245,158,11,0.6);
-        }
-        .admin-status-approved {
-            background: rgba(22,163,74,0.18);
-            color: #bbf7d0;
-            border: 1px solid rgba(22,163,74,0.6);
-        }
-        .admin-status-overdue {
-            background: rgba(239,68,68,0.18);
-            color: #fecaca;
-            border: 1px solid rgba(239,68,68,0.6);
-        }
-
-        .admin-history-row {
-            padding: 6px 0;
-            border-bottom: 1px solid rgba(55,65,81,0.7);
-            font-size: .88rem;
-        }
-        .admin-history-row:last-child {
-            border-bottom: none;
-        }
-
-        /* Toolbar / Deploy-Pillen ausblenden (wie beim Login) */
-        [data-testid="stDecoration"],
-        [data-testid="stStatusWidget"],
-        [data-testid="stCloudAppStatus"],
-        header [data-testid="stToolbar"],
-        header [data-testid="stHeaderActionButtons"],
-        header [data-testid="stActionButton"],
-        .stDeployButton,
-        .viewerBadge_container__r3R7,
-        button[title="Manage app"],
-        button[title="View source"],
-        div[style*="linear-gradient"][style*="999px"],
-        div[style*="linear-gradient"][style*="border-radius: 999px"],
-        div[style*="linear-gradient"][style*="border-radius:999px"] {
-            display: none !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ---------------------------------------------------------
-# Helper
-# ---------------------------------------------------------
-def _inventur_status_pill(inv: Dict) -> str:
-    today = datetime.date.today()
-    year = inv["year"]
-    month = inv["month"]
-    status = (inv["status"] or "editing").lower()
-    overdue = (year < today.year) or (year == today.year and month < today.month)
-
-    if status == "approved":
-        cls, label = "admin-status-approved", "Freigegeben"
-    elif status == "submitted":
-        cls, label = "admin-status-submitted", "Zur Freigabe eingereicht"
-    elif overdue and status != "approved":
-        cls, label = "admin-status-overdue", "Überfällig"
-    else:
-        cls, label = "admin-status-editing", "In Bearbeitung"
-
-    return f"<span class='admin-status-pill {cls}'>{label}</span>"
-
-
-# ---------------------------------------------------------
-# Sektion: Betrieb
-# ---------------------------------------------------------
-def _render_section_betrieb():
-    st.subheader("Betriebseinstellungen")
-
+def _ensure_tables():
     with conn() as cn:
         c = cn.cursor()
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS meta(
+
+        # --- USERS (functions/status-basiert) ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT NOT NULL UNIQUE,
+                email      TEXT,
+                first_name TEXT,
+                last_name  TEXT,
+                passhash   TEXT NOT NULL DEFAULT '',
+                functions  TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT
+            )
+        """)
+        # Migration / Backfill
+        c.execute("PRAGMA table_info(users)")
+        user_cols = {row[1] for row in c.fetchall()}
+        def _add(col, ddl):
+            if col not in user_cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
+        _add("functions",  "functions TEXT DEFAULT ''")
+        _add("passhash",   "passhash  TEXT NOT NULL DEFAULT ''")
+        _add("status",     "status    TEXT NOT NULL DEFAULT 'active'")
+        _add("created_at", "created_at TEXT")
+
+        c.execute("UPDATE users SET passhash  = COALESCE(passhash,'')")
+        c.execute("UPDATE users SET status    = COALESCE(status,'active')")
+        c.execute("UPDATE users SET created_at= COALESCE(created_at, datetime('now'))")
+
+        # --- FUNKTIONSKATALOG (Basis) ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS functions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT
+            )
+        """)
+        have_funcs = c.execute("SELECT COUNT(*) FROM functions").fetchone()[0]
+        if have_funcs == 0:
+            defaults = [
+                ("Admin", "Vollzugriff auf alle Module"),
+                ("Betriebsleiter", "Eventverwaltung & Freigaben"),
+                ("Barleiter", "Barumsätze & Abrechnung (eigene Units)"),
+                ("Kassa", "Karten-/Barzahlungen (eigene Units)"),
+                ("Garderobe", "Garderobenabrechnung (eigene Units)"),
+            ]
+            c.executemany(
+                "INSERT INTO functions(name, description) VALUES(?,?)",
+                defaults,
+            )
+
+        # --- FIXCOSTS, META, CHANGELOG ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS fixcosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-            """
-        )
-        row = c.execute(
-            "SELECT value FROM meta WHERE key='business_name'"
-        ).fetchone()
-        business_name = (row[0] if row and row[0] else "").strip()
-
-    new_name = st.text_input("Name des Betriebs", value=business_name, placeholder="z.B. O - der Klub")
-
-    if st.button("Speichern", type="primary"):
-        with conn() as cn:
-            c = cn.cursor()
-            c.execute(
-                """
-                INSERT INTO meta(key, value)
-                VALUES('business_name', ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                """,
-                (new_name.strip(),),
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS changelog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                version TEXT NOT NULL,
+                note TEXT NOT NULL
             )
-            cn.commit()
-        st.success("Betriebsname gespeichert.")
+        """)
 
+        cn.commit()
 
-# ---------------------------------------------------------
-# Sektion: Artikel
-# ---------------------------------------------------------
-def _render_section_artikel():
-    st.subheader("Artikelstamm")
+def _get_meta(key: str) -> Optional[str]:
+    with conn() as cn:
+        c = cn.cursor()
+        row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
 
-    try:
-        with conn() as cn:
-            df = pd.read_sql("SELECT * FROM items ORDER BY name COLLATE NOCASE", cn)
-    except Exception as e:
-        st.error(f"Artikel konnten nicht geladen werden: {e}")
-        return
+def _set_meta(key: str, value: str):
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
+        cn.commit()
 
-    if df.empty:
-        st.info("Noch keine Artikel vorhanden. Import oder Anlage im Admin-Cockpit erforderlich.")
-        return
+def _get_meta_many(keys: List[str]) -> Dict[str, Optional[str]]:
+    with conn() as cn:
+        c = cn.cursor()
+        out: Dict[str, Optional[str]] = {}
+        for k in keys:
+            r = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+            out[k] = r[0] if r else None
+        return out
 
-    st.caption("Hinweis: Wichtig für die Inventur sind mindestens 'id', 'name', 'purchase_price'.")
+def _set_meta_many(data: Dict[str, str]):
+    with conn() as cn:
+        c = cn.cursor()
+        for k, v in data.items():
+            c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (k, v))
+        cn.commit()
 
-    edited = st.data_editor(
-        df,
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-    )
+def _insert_changelog(version: str, notes: List[str]):
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    with conn() as cn:
+        c = cn.cursor()
+        rows = [(now, version, note) for note in notes]
+        c.executemany(
+            "INSERT INTO changelog(created_at, version, note) VALUES(?,?,?)",
+            rows,
+        )
+        cn.commit()
 
-    if st.button("Änderungen speichern", type="primary", use_container_width=True):
+def _ensure_version_logged():
+    last = _get_meta("last_seen_version")
+    if last != APP_VERSION:
+        notes = DEFAULT_CHANGELOG_NOTES.get(APP_VERSION, [f"Update auf {APP_VERSION}"])
+        _insert_changelog(APP_VERSION, notes)
+        _set_meta("last_seen_version", APP_VERSION)
+
+def _count_rows(table: str) -> int:
+    with conn() as cn:
+        c = cn.cursor()
         try:
-            with conn() as cn:
-                c = cn.cursor()
-                cols = list(edited.columns)
-                pk_col = "id"
-                if pk_col not in cols:
-                    st.error("Es wird eine 'id'-Spalte als Primärschlüssel erwartet.")
-                    return
+            return c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        except Exception:
+            return 0
 
-                cols_no_id = [c2 for c2 in cols if c2 != pk_col]
-                set_clause = ", ".join(f"{c2}=?" for c2 in cols_no_id)
+# ---------------- Backups ----------------
+def _list_backups() -> List[Path]:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted(BACKUP_DIR.glob("BCK_*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
 
-                for _, row in edited.iterrows():
-                    params = [row[c2] for c2 in cols_no_id]
-                    params.append(int(row[pk_col]))
-                    c.execute(
-                        f"UPDATE items SET {set_clause} WHERE {pk_col}=?",
-                        params,
-                    )
-                cn.commit()
-            st.success("Artikel gespeichert.")
-        except Exception as e:
-            st.error(f"Fehler beim Speichern der Artikel: {e}")
+def _last_backup_time() -> Optional[datetime.datetime]:
+    files = _list_backups()
+    return datetime.datetime.fromtimestamp(max(files, key=lambda f: f.stat().st_mtime).stat().st_mtime) if files else None
 
+def _create_backup() -> Optional[Path]:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = BACKUP_DIR / f"BCK_{ts}.bak"
+    shutil.copy(DB_PATH, target)
+    return target
 
-# ---------------------------------------------------------
-# Sektion: Inventuren (Admin-Overview)
-# ---------------------------------------------------------
-def _render_section_inventuren():
-    st.subheader("Inventuren – Übersicht & Freigabe")
+def _restore_backup(file_path: Path):
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(DB_PATH, BACKUP_DIR / f"pre_restore_{int(time.time())}.bak")
+    shutil.copy(file_path, DB_PATH)
 
-    all_inv = invdb.list_all_inventuren()
-    if not all_inv:
-        st.info("Noch keine Inventuren vorhanden.")
+def _format_size(bytes_: int) -> str:
+    return f"{bytes_ / (1024 * 1024):.1f} MB"
+
+def _db_size_mb() -> float:
+    try:
+        return round(DB_PATH.stat().st_size / (1024 * 1024), 2)
+    except Exception:
+        return 0.0
+
+def _db_table_stats() -> Tuple[int, int]:
+    """Anzahl Tabellen und Gesamtzeilen (ohne sqlite_ interne)."""
+    with conn() as cn:
+        c = cn.cursor()
+        tables = c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        table_names = [t[0] for t in tables]
+        total_rows = 0
+        for t in table_names:
+            try:
+                total_rows += c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except Exception:
+                pass
+        return len(table_names), total_rows
+
+# ---------------- UI Helpers ----------------
+def _status_badge_from_days(days: Optional[int]) -> tuple[str, str, str]:
+    if days is None:
+        return ("#ef4444", "Kein Backup", "Es wurde noch kein Backup gefunden.")
+    if days <= 5:
+        return ("#22c55e", "Aktuell", f"Letztes Backup ist {days} Tag(e) alt.")
+    if days <= 7:
+        return ("#f59e0b", "Bald fällig", f"Letztes Backup ist {days} Tag(e) alt (empfohlen: ≤5 Tage).")
+    return ("#ef4444", "Überfällig", f"Letztes Backup ist {days} Tag(e) alt (kritisch).")
+
+def _card_html(title: str, color: str, lines: List[str]) -> str:
+    body = "<br/>".join([f"<span style='opacity:0.85;font-size:12px;'>{ln}</span>" for ln in lines])
+    return f"""
+    <div style="
+        display:flex; gap:12px; align-items:flex-start;
+        padding:12px 14px; border-radius:14px;
+        background:rgba(255,255,255,0.03);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+        position:relative; overflow:hidden;
+    ">
+      <div style="
+        position:absolute; left:0; top:0; bottom:0; width:6px;
+        background: linear-gradient(180deg, {color}, {color}55);
+        border-top-left-radius:14px; border-bottom-left-radius:14px;
+      "></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:{color}; margin-top:4px;"></div>
+      <div style="font-size:13px;">
+        <b>{title}</b><br/>{body}
+      </div>
+    </div>
+    """
+
+def _pill(text: str, color: str = "#10b981") -> str:
+    return f"<span style='background:{color}22; color:{color}; padding:2px 6px; border:1px solid {color}55; border-radius:999px; font-size:11px;'>{text}</span>"
+
+# ---------------- Pending-Registrierungen (Unterpunkt) ----------------
+def _render_pending_registrations():
+    section_title("👤 Ausstehende Registrierungen")
+    pending = auth.list_pending_users()
+    if not pending:
+        st.caption("Keine offenen Registrierungen.")
         return
 
-    username = st.session_state.get("username", "") or "admin"
+    function_presets = [
+        "Admin",
+        "Betriebsleiter",
+        "Barleiter",
+        "Kassa",
+        "Garderobe",
+    ]
 
-    st.markdown("<div class='admin-card'>", unsafe_allow_html=True)
-    st.markdown("**Alle Inventuren**", unsafe_allow_html=True)
-
-    for inv in all_inv:
-        label = f"{inv['year']}-{inv['month']:02d}"
-        pill_html = _inventur_status_pill(inv)
-        total = invdb.get_inventur_total_value(inv["id"])
-        colL, colR = st.columns([3, 2])
-        with colL:
+    for u in pending:
+        with st.container(border=True):
             st.markdown(
-                f"""
-                <div class="admin-history-row">
-                    <strong>{label}</strong><br>
-                    <span style="font-size:.8rem;opacity:.7">Wert gesamt: {total:,.2f} €</span>
-                </div>
-                """,
+                f"**{u['username']}** — {u['first_name']} {u['last_name']}  \n"
+                f"<span style='opacity:.75'>E-Mail: {u['email']} · registriert: {u['created_at']}</span>",
                 unsafe_allow_html=True,
             )
-        with colR:
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                if st.button("Bearbeiten", key=f"inv_edit_{inv['id']}"):
-                    st.session_state["admin_inv_edit_id"] = inv["id"]
-            with b2:
-                if st.button("Freigeben", key=f"inv_approve_{inv['id']}"):
-                    invdb.approve_inventur(inv["id"], username)
-                    st.success(f"Inventur {label} freigegeben.")
-                    st.rerun()
-            with b3:
-                if st.button("Löschen", key=f"inv_del_{inv['id']}"):
-                    invdb.delete_inventur(inv["id"])
-                    st.warning(f"Inventur {label} gelöscht.")
-                    st.rerun()
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Detail-Editor
-    edit_id = st.session_state.get("admin_inv_edit_id")
-    if edit_id:
-        st.markdown("---")
-        st.markdown(f"### Inventur bearbeiten – ID {edit_id}")
-
-        df = invdb.load_inventur_items_df(edit_id)
-        if df.empty:
-            st.caption("Keine Positionen vorhanden (evtl. leerer Artikelstamm zur Zeit der Inventur).")
-        else:
-            st.caption("Mengen können hier angepasst werden. Werte werden automatisch neu berechnet.")
-            edited_df = st.data_editor(
-                df,
-                column_order=["item_name", "counted_qty", "purchase_price", "total_value"],
-                column_config={
-                    "item_name": st.column_config.TextColumn("Artikel", disabled=True),
-                    "counted_qty": st.column_config.NumberColumn(
-                        "Gezählte Menge", min_value=0.0, step=1.0
-                    ),
-                    "purchase_price": st.column_config.NumberColumn(
-                        "EK Netto", min_value=0.0
-                    ),
-                    "total_value": st.column_config.NumberColumn(
-                        "Gesamtwert", disabled=True
-                    ),
-                },
-                hide_index=True,
-                use_container_width=True,
-                num_rows="fixed",
-            )
-
-            col1, col2 = st.columns(2)
+            col1, col2 = st.columns([3,2])
             with col1:
-                if st.button("💾 Änderungen speichern", use_container_width=True, key="admin_inv_save"):
-                    invdb.save_inventur_counts(edit_id, edited_df, username, submit=False)
-                    st.success("Inventur gespeichert.")
-                    st.rerun()
+                preset = st.selectbox(
+                    "Rolle/Funktionen (Vorlage)",
+                    options=["(keine Vorlage)"] + function_presets,
+                    key=f"preset_{u['username']}",
+                )
+                default_text = "" if preset == "(keine Vorlage)" else preset
+                functions = st.text_input(
+                    "Funktionen (frei editierbar, komma-getrennt)",
+                    key=f"fn_{u['username']}",
+                    value=default_text,
+                    placeholder="z. B. Barleiter, Kassa",
+                )
             with col2:
-                if st.button("✅ Speichern & freigeben", use_container_width=True, key="admin_inv_save_approve"):
-                    invdb.save_inventur_counts(edit_id, edited_df, username, submit=True)
-                    invdb.approve_inventur(edit_id, username)
-                    st.success("Inventur gespeichert und freigegeben.")
+                cA, cB = st.columns(2)
+                if cA.button("✔️ Freigeben", use_container_width=True, key=f"approve_{u['username']}"):
+                    ok, msg = auth.approve_user(u["username"], functions)
+                    st.success(msg if ok else f"Fehler: {msg}")
+                    st.rerun()
+                if cB.button("🗑️ Verwerfen", use_container_width=True, key=f"reject_{u['username']}"):
+                    ok, msg = auth.reject_user(u["username"])
+                    st.warning(msg if ok else f"Fehler: {msg}")
                     st.rerun()
 
-            st.download_button(
-                "📥 CSV exportieren",
-                data=edited_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"inventur_admin_{edit_id}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+# ---------------- Übersicht ----------------
+def _render_home():
+    users_cnt = _count_rows("users")
+    fix_cnt   = _count_rows("fixcosts")
+    backups   = _list_backups()
+    total_backups = len(backups)
 
+    last_bkp_dt = _last_backup_time()
+    days_since = None if last_bkp_dt is None else (datetime.date.today() - last_bkp_dt.date()).days
+    bkp_color, bkp_label, bkp_tip = _status_badge_from_days(days_since)
 
-# ---------------------------------------------------------
-# Sektion: Benutzer
-# ---------------------------------------------------------
-def _render_section_users():
-    st.subheader("Benutzerverwaltung")
+    db_size = _db_size_mb()
+    num_tables, total_rows = _db_table_stats()
 
-    pending_count = 0
-    try:
-        pending_count = auth_mod.pending_count()
-    except Exception:
-        pass
+    # Pending Registrierungen (Badge für Übersicht)
+    pending_count = len(auth.list_pending_users())
 
-    if pending_count:
-        st.caption(f"🔔 Es gibt {pending_count} offene Registrierungsanfragen.")
+    # 4 Karten
+    c1, c2, c3, c4 = st.columns(4, gap="large")
 
-    # Pending-Queue
-    with st.expander("Offene Registrierungen anzeigen / bearbeiten", expanded=False):
-        try:
-            pendings = auth_mod.list_pending_users()
-        except Exception as e:
-            st.error(f"Pending-User konnten nicht geladen werden: {e}")
-            pendings = []
+    with c1:
+        today_str = datetime.date.today().strftime("%d.%m.%Y")
+        lines = [
+            f"Prüfung: {today_str}",
+            f"Benutzer: {users_cnt}",
+            f"Fixkosten: {fix_cnt}",
+        ]
+        if pending_count > 0:
+            lines.append(f"⚠️ Offene Registrierungen: {pending_count}")
+        st.markdown(_card_html("Systemstatus", "#22c55e", lines), unsafe_allow_html=True)
 
-        if not pendings:
-            st.caption("Keine offenen Registrierungen.")
-        else:
-            for u in pendings:
-                colL, colR = st.columns([3, 2])
-                with colL:
-                    st.markdown(
-                        f"**{u['username']}** – {u['first_name']} {u['last_name']}  \n"
-                        f"<span style='font-size:.8rem;opacity:.7'>{u['email']} – registriert am {u['created_at']}</span>",
-                        unsafe_allow_html=True,
-                    )
-                with colR:
-                    fn = st.text_input(
-                        "Funktionen (z.B. admin,inventur)",
-                        key=f"fn_{u['username']}",
-                        placeholder="admin,inventur",
-                    )
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("Freigeben", key=f"approve_{u['username']}"):
-                            ok, msg = auth_mod.approve_user(u["username"], fn)
-                            if ok:
-                                st.success(msg)
-                                st.rerun()
-                            else:
-                                st.error(msg)
-                    with c2:
-                        if st.button("Löschen", key=f"reject_{u['username']}"):
-                            ok, msg = auth_mod.reject_user(u["username"])
-                            if ok:
-                                st.warning(msg)
-                                st.rerun()
-                            else:
-                                st.error(msg)
-
-    st.markdown("---")
-
-    # Aktive Benutzer
-    st.markdown("**Aktive Benutzer & Rollen**")
-
-    with conn() as cn:
-        df = pd.read_sql(
-            """
-            SELECT id, username,
-                   COALESCE(first_name,'') AS first_name,
-                   COALESCE(last_name,'')  AS last_name,
-                   COALESCE(email,'')      AS email,
-                   COALESCE(functions,'')  AS functions,
-                   COALESCE(status,'active') AS status
-              FROM users
-             ORDER BY username
-            """,
-            cn,
+    with c2:
+        last_text = "—" if not last_bkp_dt else last_bkp_dt.strftime("%d.%m.%Y %H:%M")
+        st.markdown(
+            _card_html(
+                "Backupstatus",
+                bkp_color,
+                [
+                    f"Status: {bkp_label}",
+                    f"Letztes Backup: {last_text}",
+                    f"Backups gesamt: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
         )
 
+    with c3:
+        st.markdown(
+            _card_html(
+                "Datenbank",
+                "#3b82f6",
+                [
+                    f"Größe: {db_size} MB",
+                    f"Tabellen: {num_tables}",
+                    f"Zeilen: {total_rows}",
+                    f"Backups: {total_backups}",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with c4:
+        # Betriebskennzahlen (sanft, da optional)
+        last_inv_str = "—"
+        artikel_count = 0
+        einkauf_total = 0
+        umsatz_total = 0
+        with conn() as cn:
+            c = cn.cursor()
+            if _table_exists(c, "inventur"):
+                row = c.execute("SELECT MAX(created_at) FROM inventur").fetchone()
+                last_inv = row[0] if row and row[0] else None
+                if last_inv:
+                    try:
+                        last_inv_str = datetime.datetime.fromisoformat(last_inv).strftime("%d.%m.%Y")
+                    except Exception:
+                        try:
+                            last_inv_str = datetime.datetime.strptime(last_inv, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                        except Exception:
+                            last_inv_str = str(last_inv)
+            if _table_exists(c, "items"):
+                row = c.execute("SELECT COUNT(*) FROM items").fetchone()
+                artikel_count = row[0] if row and row[0] else 0
+                row = c.execute("SELECT SUM(purchase_price) FROM items").fetchone()
+                einkauf_total = row[0] if row and row[0] else 0
+            if _table_exists(c, "umsatz"):
+                row = c.execute("SELECT SUM(amount) FROM umsatz").fetchone()
+                umsatz_total = row[0] if row and row[0] else 0
+
+        wareneinsatz = (einkauf_total / umsatz_total * 100) if umsatz_total > 0 else None
+        lines = [
+            f"Letzte Inventur: {last_inv_str}",
+            f"Artikel: {artikel_count}",
+            f"Wareneinsatz: {f'{wareneinsatz:.1f} %' if wareneinsatz is not None else '— %'}",
+        ]
+        st.markdown(_card_html("Betriebsstatus", "#f97316", lines), unsafe_allow_html=True)
+
+    # Deutlicher Hinweis oben, solange pending > 0
+    if pending_count > 0:
+        st.info(f"Es liegen {pending_count} ausstehende Registrierungsanfrage(n) vor. Öffne **Benutzer → Registrierungen**, um diese zu prüfen.")
+
+    st.divider()
+
+    # --- Changelog ---
+    section_title("📝 Änderungsprotokoll")
+    with conn() as cn:
+        df = pd.read_sql(
+            "SELECT created_at, version, note FROM changelog "
+            "ORDER BY datetime(created_at) DESC LIMIT 20",
+            cn,
+        )
     if df.empty:
-        st.info("Noch keine Benutzer vorhanden.")
+        st.info("Keine Einträge im Changelog.")
+    else:
+        for _, r in df.iterrows():
+            st.markdown(
+                f"<div style='font-size:12px;opacity:0.8;'><b>{r['version']}</b> – {r['created_at'][:16]}: {r['note']}</div>",
+                unsafe_allow_html=True,
+            )
+
+# ---------------- Betrieb (Grundparameter) ----------------
+def _render_business_admin():
+    section_title("🏢 Grundparameter des Betriebs")
+
+    # bestehende Stammdaten
+    base_keys = [
+        "business_name",
+        "business_street",
+        "business_zip",
+        "business_city",
+        "business_phone",
+        "business_email",
+        "business_uid",
+        "business_iban",
+        "business_capacity",
+        "business_note",
+    ]
+
+    # Einheiten-Zählwerte (kompatible Aliasse)
+    unit_keys = [
+        "bars_count", "business_bars", "num_bars",
+        "registers_count", "business_registers", "num_registers", "kassen_count",
+        "cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count",
+        "conf_coat_price", "conf_bag_price",
+    ]
+
+    values = _get_meta_many(base_keys + unit_keys)
+
+    def _first_int(keys: list[str], default: int = 0) -> int:
+        for k in keys:
+            v = values.get(k)
+            if v is not None and str(v).strip() != "":
+                try:
+                    return max(0, int(float(str(v).strip())))
+                except Exception:
+                    continue
+        return default
+
+    def _first_float(keys: list[str], default: float = 0.0) -> float:
+        for k in keys:
+            v = values.get(k)
+            if v is not None and str(v).strip() != "":
+                try:
+                    return float(str(v).replace(",", "."))
+                except Exception:
+                    continue
+        return default
+
+    with st.form("business_form"):
+        a, b = st.columns([2, 2])
+        name = a.text_input("Name des Betriebs", value=values.get("business_name") or "")
+        phone = b.text_input("Telefon", value=values.get("business_phone") or "")
+
+        c, d = st.columns([3, 1])
+        street = c.text_input("Straße & Hausnummer", value=values.get("business_street") or "")
+        zip_code = d.text_input("PLZ", value=values.get("business_zip") or "")
+
+        city = st.text_input("Ort / Stadt", value=values.get("business_city") or "")
+
+        e, f = st.columns(2)
+        email = e.text_input("E-Mail", value=values.get("business_email") or "")
+        uid = f.text_input("UID", value=values.get("business_uid") or "")
+
+        g, h = st.columns(2)
+        iban = g.text_input("IBAN", value=values.get("business_iban") or "")
+        capacity = h.number_input(
+            "Fassungsvermögen (Personen)", min_value=0, step=1,
+            value=int(values.get("business_capacity") or 0)
+        )
+
+        note = st.text_input("Notiz (optional)", value=values.get("business_note") or "")
+
+        st.markdown("---")
+        section_title("🧩 Einheiten für Abrechnung")
+        u1, u2, u3 = st.columns(3)
+
+        bars_count = u1.number_input(
+            "Anzahl Bars",
+            min_value=0, step=1,
+            value=_first_int(["bars_count", "business_bars", "num_bars"], 0)
+        )
+        registers_count = u2.number_input(
+            "Anzahl Kassen",
+            min_value=0, step=1,
+            value=_first_int(["registers_count", "business_registers", "num_registers", "kassen_count"], 0)
+        )
+        cloakrooms_count = u3.number_input(
+            "Anzahl Garderoben",
+            min_value=0, step=1,
+            value=_first_int(["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"], 0)
+        )
+
+        st.caption("Optional (nur falls im Abrechnungsteil benötigt)")
+        p1, p2 = st.columns(2)
+        conf_coat_price = p1.number_input(
+            "Preis pro Jacke/Kleidung (€)", min_value=0.0, step=0.5,
+            value=_first_float(["conf_coat_price"], 2.0)
+        )
+        conf_bag_price = p2.number_input(
+            "Preis pro Tasche/Rucksack (€)", min_value=0.0, step=0.5,
+            value=_first_float(["conf_bag_price"], 3.0)
+        )
+
+        if st.form_submit_button("💾 Speichern", use_container_width=True):
+            to_save = {
+                "business_name": name,
+                "business_street": street,
+                "business_zip": zip_code,
+                "business_city": city,
+                "business_phone": phone,
+                "business_email": email,
+                "business_uid": uid,
+                "business_iban": iban,
+                "business_capacity": str(capacity),
+                "business_note": note,
+            }
+            for k in ["bars_count", "business_bars", "num_bars"]:
+                to_save[k] = str(bars_count)
+            for k in ["registers_count", "business_registers", "num_registers", "kassen_count"]:
+                to_save[k] = str(registers_count)
+            for k in ["cloakrooms_count", "business_cloakrooms", "num_cloakrooms", "garderoben_count"]:
+                to_save[k] = str(cloakrooms_count)
+            to_save["conf_coat_price"] = str(conf_coat_price)
+            to_save["conf_bag_price"]  = str(conf_bag_price)
+
+            _set_meta_many(to_save)
+            st.success("Betriebs- & Einheiten-Daten gespeichert. Öffne danach 'Abrechnung' erneut.")
+
+# ---------------- Fixkosten ----------------
+def _render_fixcost_admin():
+    section_title("💰 Fixkostenverwaltung")
+
+    with conn() as cn:
+        c = cn.cursor()
+        costs = c.execute("SELECT id, name, amount, note, is_active FROM fixcosts ORDER BY id").fetchall()
+
+    with st.form("add_fixcost"):
+        c1, c2 = st.columns([2, 1])
+        name = c1.text_input("Bezeichnung")
+        amount = c2.number_input("Betrag (€)", min_value=0.0, step=10.0)
+        note = st.text_input("Notiz (optional)")
+        active = st.checkbox("Aktiv", value=True)
+        if st.form_submit_button("➕ Fixkosten hinzufügen"):
+            if not name:
+                st.warning("Bezeichnung ist erforderlich.")
+            else:
+                with conn() as cn:
+                    c = cn.cursor()
+                    c.execute(
+                        "INSERT INTO fixcosts(name, amount, note, is_active) VALUES(?,?,?,?)",
+                        (name, float(amount), note, int(active)),
+                    )
+                    cn.commit()
+                st.success("Fixkosten hinzugefügt.")
+                st.rerun()
+
+    st.divider()
+    if not costs:
+        st.info("Noch keine Fixkosten erfasst.")
+    else:
+        for fid, name, amount, note, active in costs:
+            state_emoji = "🟢" if active else "⚪"
+            with st.expander(f"{state_emoji} {name} – {amount:.2f} €", expanded=False):
+                st.markdown(_pill("aktiv", "#10b981") if active else _pill("inaktiv", "#6b7280"), unsafe_allow_html=True)
+                st.write("")
+                c1, c2 = st.columns([2, 1])
+                e_name = c1.text_input("Bezeichnung", value=name, key=f"fc_name_{fid}")
+                e_amount = c2.number_input("Betrag (€)", value=float(amount or 0.0), step=10.0, key=f"fc_amount_{fid}")
+                e_note = st.text_input("Notiz", value=note or "", key=f"fc_note_{fid}")
+                e_active = st.checkbox("Aktiv", value=bool(active), key=f"fc_active_{fid}")
+                s1, s2 = st.columns(2)
+                if s1.button("💾 Speichern", key=f"fc_save_{fid}"):
+                    with conn() as cn:
+                        c = cn.cursor()
+                        c.execute(
+                            "UPDATE fixcosts SET name=?, amount=?, note=?, is_active=? WHERE id=?",
+                            (e_name, float(e_amount), e_note, int(e_active), fid),
+                        )
+                        cn.commit()
+                    st.success("Gespeichert.")
+                if s2.button("🗑️ Löschen", key=f"fc_del_{fid}"):
+                    with conn() as cn:
+                        c = cn.cursor()
+                        c.execute("DELETE FROM fixcosts WHERE id=?", (fid,))
+                        cn.commit()
+                    st.warning(f"Fixkosten '{name}' gelöscht.")
+                    st.rerun()
+
+# ---------------- Datenbank-Übersicht ----------------
+def _render_db_overview():
+    section_title("🗂️ Datenbank – Übersicht & Export")
+    with conn() as cn:
+        c = cn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [r[0] for r in c.fetchall()]
+    if not tables:
+        st.info("Keine Tabellen vorhanden.")
+        return
+    selected_table = st.selectbox("Tabelle auswählen", tables)
+    if selected_table:
+        with conn() as cn:
+            df = pd.read_sql(f"SELECT * FROM {selected_table}", cn)
+        st.dataframe(df, use_container_width=True, height=420)
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📤 CSV exportieren", csv, file_name=f"{selected_table}.csv", mime="text/csv")
+
+# ---------------- Backup-Verwaltung ----------------
+def _render_backup_admin():
+    section_title("💾 Datenbank-Backups")
+
+    lb = _last_backup_time()
+    last_text = lb.strftime("%d.%m.%Y %H:%M") if lb else "—"
+    st.caption(f"Letztes Backup: **{last_text}**")
+
+    col_a, col_b = st.columns([1, 1])
+
+    if col_a.button("🧷 Backup jetzt erstellen", key="bkp_create_admin", use_container_width=True):
+        created = _create_backup()
+        if created:
+            st.success(f"Backup erstellt: {created.name}")
+        time.sleep(1)
+        st.rerun()
+
+    backups = _list_backups()
+    if not backups:
+        st.info("Keine Backups gefunden.")
         return
 
-    edited = st.data_editor(
-        df,
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-        column_config={
-            "username": st.column_config.TextColumn("Benutzername", disabled=True),
-            "first_name": st.column_config.TextColumn("Vorname"),
-            "last_name": st.column_config.TextColumn("Nachname"),
-            "email": st.column_config.TextColumn("E-Mail"),
-            "functions": st.column_config.TextColumn("Funktionen (Komma-getrennt)"),
-            "status": st.column_config.SelectboxColumn(
-                "Status",
-                options=["active", "pending", "disabled"],
-            ),
-        },
-    )
+    opt = {f.name: f for f in backups}
+    sel = st.selectbox("Backup auswählen", list(opt.keys()))
+    chosen = opt[sel]
+    st.write(f"📅 {time.ctime(chosen.stat().st_mtime)}")
+    st.write(f"📁 {chosen}")
+    st.write(f"💾 Größe: {_format_size(chosen.stat().st_size)}")
 
-    if st.button("Änderungen speichern", type="primary", use_container_width=True, key="admin_users_save"):
-        try:
-            with conn() as cn:
-                c = cn.cursor()
-                for _, row in edited.iterrows():
-                    c.execute(
-                        """
-                        UPDATE users
-                           SET first_name=?,
-                               last_name=?,
-                               email=?,
-                               functions=?,
-                               status=?
-                         WHERE id=?
-                        """,
-                        (
-                            row["first_name"] or "",
-                            row["last_name"] or "",
-                            row["email"] or "",
-                            row["functions"] or "",
-                            (row["status"] or "active").lower(),
-                            int(row["id"]),
-                        ),
-                    )
-                cn.commit()
-            st.success("Benutzer aktualisiert.")
-        except Exception as e:
-            st.error(f"Fehler beim Speichern der Benutzer: {e}")
+    ok = st.checkbox("Ich bestätige die Wiederherstellung dieses Backups.", key="bkp_restore_confirm")
+    if col_b.button("🔄 Backup wiederherstellen", key="bkp_restore_action", disabled=not ok, use_container_width=True):
+        with st.spinner("Backup wird wiederhergestellt..."):
+            _restore_backup(chosen)
+            time.sleep(1.0)
+        st.success("✅ Backup wiederhergestellt. Bitte App neu starten.")
 
-
-# ---------------------------------------------------------
-# Entry-Point
-# ---------------------------------------------------------
+# ---------------- Haupt-Render ----------------
 def render_admin():
-    """
-    Wird von app.py (route()) ohne Argumente aufgerufen.
-    """
-    _inject_admin_styles()
+    """Entry-Point für das Admin-Cockpit (wird von app.py aufgerufen)."""
+    if st.session_state.get("role") != "admin":
+        st.error("Kein Zugriff. Adminrechte erforderlich.")
+        return
 
-    st.markdown(
-        f"""
-        <div class="admin-hero">
-          <div class="admin-title">Admin-Cockpit</div>
-          <div class="admin-sub">Zentrale Verwaltung von Betrieb, Artikeln, Inventuren & Benutzern.</div>
-          <div class="admin-mini">{APP_NAME} · v{APP_VERSION}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    _ensure_tables()
+    _ensure_version_logged()
 
-    tab_choice = st.radio(
-        "Bereich",
-        ["Betrieb", "Artikel", "Inventuren", "Benutzer"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="admin_section_choice",
-    )
+    # Kopf
+    page_header("Admin-Cockpit", "System- und Datenübersicht")
 
-    if tab_choice == "Betrieb":
-        _render_section_betrieb()
-    elif tab_choice == "Artikel":
-        _render_section_artikel()
-    elif tab_choice == "Inventuren":
-        _render_section_inventuren()
-    elif tab_choice == "Benutzer":
-        _render_section_users()
+    # Zähler für Pending-Registrierungen (Badge in Sub-Tab)
+    pending_count = len(auth.list_pending_users())
+    pending_label = "📝 Registrierungen" if pending_count == 0 else f"📝 Registrierungen ({pending_count})"
+
+    # Haupt-Tabs
+    tabs = st.tabs([
+        "🏠 Übersicht",   # 0
+        "🏢 Betrieb",     # 1
+        "👤 Benutzer",    # 2 (mit Sub-Tabs)
+        "💰 Fixkosten",   # 3
+        "🗂️ Datenbank",  # 4
+        "📦 Daten",       # 5
+        "💾 Backups",     # 6
+    ])
+
+    with tabs[0]:
+        _render_home()
+    with tabs[1]:
+        _render_business_admin()
+    with tabs[2]:
+        # Sub-Tabs unter "Benutzer"
+        sub = st.tabs(["👥 Benutzerverwaltung", pending_label])
+        with sub[0]:
+            render_users_admin()
+        with sub[1]:
+            _render_pending_registrations()
+    with tabs[3]:
+        _render_fixcost_admin()
+    with tabs[4]:
+        _render_db_overview()
+    with tabs[5]:
+        try:
+            from modules.import_items import render_data_tools
+            render_data_tools()
+        except Exception as e:
+            st.error(f"Fehler beim Laden des Import-Tools: {e}")
+    with tabs[6]:
+        _render_backup_admin()
+
+    st.markdown("---")
+    st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
