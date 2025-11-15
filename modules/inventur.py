@@ -179,25 +179,28 @@ def _render_current_inventur(username: str, is_reviewer: bool):
     with st.container():
         st.markdown("<div class='inv-card'>", unsafe_allow_html=True)
 
-        if not current_inv:
-            st.markdown(
-                f"**Noch keine Inventur für {month_label} {today.year} angelegt.**"
-            )
-            if st.button(
-                f"📦 Inventur für {month_label} {today.year} starten",
-                type="primary",
-                use_container_width=True,
-            ):
+    if not current_inv:
+        st.markdown(
+            f"**Noch keine Inventur für {month_label} {today.year} angelegt.**"
+        )
+        if st.button(
+            f"📦 Inventur für {month_label} {today.year} starten",
+            type="primary",
+            use_container_width=True,
+        ):
+            # 👉 Vor dem Anlegen prüfen, ob es überhaupt Artikel gibt
+            if not invdb.has_any_items():
+                st.error("Keine Artikel im Artikelstamm vorhanden. Bitte zuerst Artikel anlegen.")
+            else:
                 current_inv = invdb.get_current_inventur(
-                    auto_create=True, username=username
+                    auto_create=True,
+                    username=username,
                 )
-                st.success(
-                    "Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen."
-                )
+                st.success("Inventur angelegt. Artikel wurden aus dem Artikelstamm übernommen.")
                 st.rerun()
 
-            st.markdown("</div>", unsafe_allow_html=True)
-            return
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
 
         # Meta + Status
         status_html = _status_pill(
