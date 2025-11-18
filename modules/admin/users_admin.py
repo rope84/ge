@@ -193,11 +193,14 @@ def _tab_overview():
         total_users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
     c1, c2, c3, c4 = st.columns(4, gap="large")
+
+    # Gesamt-Karte
     c1.markdown(
         _card_html("👥 Gesamt", "#3b82f6", [f"Alle Benutzer: <b>{total_users}</b>"]),
         unsafe_allow_html=True,
     )
 
+    # Funktions-Karten
     for i, (fname,) in enumerate(funcs):
         count = _count_users_with_function(fname)
         color = {
@@ -206,9 +209,19 @@ def _tab_overview():
             "inventur": "#f59e0b",
             "user": "#10b981",
         }.get(fname.lower(), "#6b7280")
+
+        # Spalte bleibt wie bisher
         col = [c2, c3, c4, c1][i % 4]
+
+        # Ab der „zweiten Reihe“ (also ab i >= 4) etwas Abstand nach oben
+        top_margin = "0px" if i < 4 else "20px"
+
         col.markdown(
-            _card_html(fname.capitalize(), color, [f"Benutzer: <b>{count}</b>"]),
+            f"""
+            <div style="margin-top:{top_margin};">
+                {_card_html(fname.capitalize(), color, [f"Benutzer: <b>{count}</b>"])}
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -534,10 +547,8 @@ def render_users_admin():
     _ensure_user_schema()
     _ensure_function_schema()
 
-    section_title("👥 Benutzerverwaltung")
-
     mode = st.radio(
-        "Bereich auswählen",
+        "",
         [
             "📊 Übersicht",
             "➕ User erstellen",
