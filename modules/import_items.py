@@ -8,6 +8,7 @@ from typing import Optional, Dict, List, Tuple
 
 from core.db import conn
 from core.ui_theme import section_title
+from . import inventur_db as invdb
 
 # ====================== Small utils ======================
 
@@ -627,17 +628,209 @@ def _render_items_admin():
             st.rerun()
         except Exception as e:
             st.error(f"Fehler beim Speichern: {e}")
+# ====================== Inventuren verwalten (Admin) ======================
 
+def _status_badge(status: str) -> str:
+    status = (status or "editing").lower()
+    if status == "approved":
+        label = "Freigegeben"
+    elif status == "submitted":
+        label = "Eingereicht"
+    elif status == "editing":
+        label = "In Bearbeitung"
+    else:
+        label = status.capitalize()
+    return (
+        "<span style='"
+        "padding:2px 8px;"
+        "border-radius:999px;"
+        "border:1px solid rgba(148,163,184,0.6);"
+        "font-size:0.7rem;"
+        "opacity:0.9;"
+        "'>"
+        f"{label}"
+        "</span>"
+    )
+
+def _render_inventuren_admin():
+    section_title("📋 Inventuren verwalten")
+    st.caption(
+        "Übersicht über alle Inventuren. "
+        "Als Admin kannst du Inventuren hier einsehen, bearbeiten, freigeben oder löschen."
+    )
+
+    all_inv = invdb.list_all_inventuren()
+    if not all_inv:
+        st.info("Es wurden noch keine Inventuren angelegt.")
+        return
+
+    # Filter: nur erledigte Inventuren oder alle
+    col_filter, _ = st.columns([1, 3])
+    show_all = col_filter.checkbox(
+        "Auch laufende Inventuren anzeigen", value=False
+    )
+
+    if not show_all:
+        inv_list = [
+            i
+            for i in all_inv
+            if (i.get("status") or "").lower() in ("submitted", "approved")
+        ]
+    else:
+        inv_list = all_inv
+
+    username = st.session_state.get("username", "admin")
+
+    for inv in inv_list:
+        inv_id = inv["id"]
+        year = inv["year"]
+        month = inv["month"]
+        status = (inv.get("status") or "editing").lower()
+        total = invdb.get_inventur_total_value(inv_id)
+
+        month_label = datetime.date(year, month, 1).strftime("%b %Y")
+
+        box = st.container(border=True)
+        header_cols = box.columns([3, 2, 2])
+
+        # Titel + Status
+        with header_cols[0]:
+            st.markdown(f"**{month_label}**")
+            st.markdown(_status_badge(status), unsafe_allow_html=True)
+
+        # Meta / Zeiten
+        with header_cols[1]:
+            st.caption(f"Wert gesamt: **{total:,.2f} €**")
+            if inv.get("submitted_at"):
+                st.caption(f"Eingereicht: {inv['submitted_at']}")
+            if inv.get("approved_at"):
+                st.caption(f"Freigegeben: {inv['approved_at']}")
+
+        # Aktionen
+        with header_cols[2]:
+            bcols = st.columns(3)
+
+            # Löschen (nur wenn nicht freigegeben)
+            can_delete = status != "approved"
+            if bcols[0].button(
+                "🗑️ Löschen",
+                key=f"inv_del_{inv_id}",
+                use_container_width=True,
+                disabled=not can_delete,
+            ):
+                invdb.delete_inventur(inv_id, username)
+                st.success(f"Inventur {month_label} wurde gelöscht.")
+                st.rerun()
+
+            # Freigeben
+            can_approve = status in ("submitted", "editing")
+            if bcols[1].button(
+                "🔓 Freigeben",
+                key=f"inv_app_{inv_id}",
+                use_container_width=True,
+                disabled=not can_approve,
+            ):
+                df_items = invdb.load_inventur_items_df(inv_id)
+                invdb.save_inventur_counts(inv_id, df_items, username, submit=True)
+                invdb.approve_inventur(inv_id, username)
+                st.success(f"Inventur {month_label} wurde freigegeben.")
+                st.rerun()
+
+            # Platzhalter für Layout
+            bcols[2].markdown("")
+
+        # Bearbeiten / Details
+        with box.expander("Bearbeiten / Details ansehen", expanded=False):
+            df_items = invdb.load_inventur_items_df(inv_id)
+            if df_items.empty:
+                st.caption(
+                    "Keine Artikel in dieser Inventur. Prüfe bitte den Artikelstamm."
+                )
+            else:
+                df_display = df_items.copy()
+                st.caption(
+                    "Du kannst hier die gezählten Mengen und Einkaufspreise anpassen. "
+                    "Änderungen gelten nur für diese Inventur."
+                )
+
+                edited_df = st.data_editor(
+                    df_display,
+                    column_order=[
+                        "item_name",
+                        "counted_qty",
+                        "purchase_price",
+                        "total_value",
+                    ],
+                    column_config={
+                        "item_name": st.column_config.TextColumn(
+                            "Artikel", disabled=True
+                        ),
+                        "counted_qty": st.column_config.NumberColumn(
+                            "Gezählt", step=0.1
+                        ),
+                        "purchase_price": st.column_config.NumberColumn(
+                            "EK-Preis (€)", format="%.2f"
+                        ),
+                        "total_value": st.column_config.NumberColumn(
+                            "Wert (€)", disabled=True, format="%.2f"
+                        ),
+                    },
+                    use_container_width=True,
+                    key=f"inv_edit_{inv_id}",
+                )
+
+                btn_cols = st.columns(3)
+
+                # Zwischenspeichern
+                if btn_cols[0].button(
+                    "💾 Zwischenspeichern",
+                    key=f"inv_save_{inv_id}",
+                    use_container_width=True,
+                ):
+                    invdb.save_inventur_counts(
+                        inv_id, edited_df, username, submit=False
+                    )
+                    st.success("Inventur wurde gespeichert.")
+                    st.rerun()
+
+                # Einreichen
+                if btn_cols[1].button(
+                    "📨 Einreichen",
+                    key=f"inv_submit_{inv_id}",
+                    use_container_width=True,
+                ):
+                    invdb.save_inventur_counts(
+                        inv_id, edited_df, username, submit=True
+                    )
+                    st.success(
+                        "Inventur wurde eingereicht. Sie kann jetzt freigegeben werden."
+                    )
+                    st.rerun()
+
+                # Speichern & freigeben
+                if btn_cols[2].button(
+                    "🔓 Speichern & freigeben",
+                    key=f"inv_submit_app_{inv_id}",
+                    use_container_width=True,
+                ):
+                    invdb.save_inventur_counts(
+                        inv_id, edited_df, username, submit=True
+                    )
+                    invdb.approve_inventur(inv_id, username)
+                    st.success("Inventur wurde gespeichert und freigegeben.")
+                    st.rerun()
 # ====================== Öffentliche Render-Funktion ======================
 
 def render_data_tools():
     """
     Wird von admin.py (Tab „📦 Daten“) aufgerufen.
-    Bietet drei Unterbereiche: Import, Kategorien, Artikel – ohne Sidebar.
+    Bietet vier Unterbereiche: Import, Kategorien, Artikel, Inventuren – ohne Sidebar.
     """
     _ensure_items_table()
 
-    tabs = st.tabs(["⬆️ Import", "🏷️ Kategorien", "📦 Artikel"])
+    tabs = st.tabs(
+        ["⬆️ Import", "🏷️ Kategorien", "📦 Artikel", "📋 Inventuren"]
+    )
     # Import
     with tabs[0]:
         state = _get_state()
@@ -684,10 +877,14 @@ def render_data_tools():
                 st.session_state.imp_step = 1
                 st.rerun()
 
-    # Kategorien
+        # Kategorien
     with tabs[1]:
         _render_categories_admin()
 
     # Artikel
     with tabs[2]:
         _render_items_admin()
+
+    # Inventuren
+    with tabs[3]:
+        _render_inventuren_admin()
