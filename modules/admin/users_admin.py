@@ -524,16 +524,35 @@ def _tab_functions():
 # ------------------------------------------------------------
 
 def render_users_admin():
+    """Benutzerverwaltung ohne zusätzliche Tab-Leiste.
+
+    Die eigentliche Navigation innerhalb der Benutzerverwaltung
+    erfolgt über eine kompakte Auswahl (Radio/Segment), damit
+    im Admin-Cockpit nicht mehrere Tabzeilen untereinander entstehen.
+    Alle bisherigen Funktionen bleiben erhalten.
+    """
     _ensure_user_schema()
     _ensure_function_schema()
 
-    tabs = st.tabs([
-        "📊 Übersicht",
-        "➕ User erstellen",
-        "🔎 Suchen & Bearbeiten",
-        "⚙️ Funktionen"
-    ])
-    with tabs[0]: _tab_overview()
-    with tabs[1]: _tab_create_user()
-    with tabs[2]: _tab_search_edit()
-    with tabs[3]: _tab_functions()
+    section_title("👥 Benutzerverwaltung")
+
+    mode = st.radio(
+        "Bereich auswählen",
+        [
+            "📊 Übersicht",
+            "➕ User erstellen",
+            "🔎 Suchen & Bearbeiten",
+            "⚙️ Funktionen",
+        ],
+        key="ua_mode",
+        horizontal=True,  # falls deine Streamlit-Version das nicht kennt -> einfach weglassen
+    )
+
+    if mode.startswith("📊"):
+        _tab_overview()
+    elif mode.startswith("➕"):
+        _tab_create_user()
+    elif mode.startswith("🔎"):
+        _tab_search_edit()
+    else:
+        _tab_functions()
