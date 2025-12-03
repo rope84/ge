@@ -7,12 +7,22 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.db import setup_db
-setup_db()
-
+from core.db import setup_db, conn
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
+
+# ---------------- Initial Setup ----------------
+setup_db()
+
+# ---------------- Setup-Check persistiert ----------------
+def is_setup_complete():
+    try:
+        with conn() as c:
+            row = c.execute("SELECT value FROM setup WHERE key = 'setup_done'").fetchone()
+            return row and row[0] == "yes"
+    except Exception:
+        return False
 
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
@@ -53,7 +63,6 @@ def init_session():
     s.setdefault("role", "guest")
     s.setdefault("scope", "")
     s.setdefault("nav_choice", "Start")
-    s.setdefault("setup_done", False)
 
 init_session()
 
@@ -185,8 +194,7 @@ def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
 
-    # Setup-Phase abfangen
-    if not st.session_state.get("setup_done"):
+    if not is_setup_complete():
         import modules.setup as setup
         setup.render_setup()
         return
