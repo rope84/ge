@@ -1,3 +1,5 @@
+# core/db.py
+
 import sqlite3
 import shutil
 import time
@@ -7,7 +9,9 @@ DB_PATH = "gastro.db"
 BACKUP_DIR = Path("DB_BCK")
 
 
+# ---------- Low-level helpers ----------
 def conn():
+    """Öffnet eine SQLite-Verbindung (thread-safe off, passend für Streamlit)."""
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
@@ -21,6 +25,7 @@ def _add_column_if_missing(c, table: str, col: str, ddl: str):
         c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
+# ---------- Migrations ----------
 def _ensure_schema_migrations(c):
     c.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -43,25 +48,71 @@ def _set_version(c, v: int):
 
 
 def migrate():
+    """Führt idempotente Migrationen durch."""
     with conn() as cn:
         c = cn.cursor()
         _ensure_schema_migrations(c)
         ver = _get_version(c)
 
-        # USERS Tabelle
+        # USERS Tabelle (alle Spalten wie benötigt)
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                passhash TEXT NOT NULL,
-                functions TEXT DEFAULT '',
-                status TEXT DEFAULT 'active'
+                username    TEXT UNIQUE NOT NULL,
+                passhash    TEXT NOT NULL,
+                functions   TEXT DEFAULT '',
+                status      TEXT DEFAULT 'active',
+                role        TEXT DEFAULT '',
+                scope       TEXT DEFAULT '',
+                email       TEXT DEFAULT '',
+                first_name  TEXT DEFAULT '',
+                last_name   TEXT DEFAULT ''
             );
         """)
         _add_column_if_missing(c, "users", "functions", "TEXT DEFAULT ''")
         _add_column_if_missing(c, "users", "status", "TEXT DEFAULT 'active'")
+        _add_column_if_missing(c, "users", "role", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "scope", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "email", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
 
-        # SETUP
+        # EMPLOYEES Tabelle
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                contract    TEXT NOT NULL,
+                hourly      REAL NOT NULL DEFAULT 0,
+                is_barlead  INTEGER NOT NULL DEFAULT 0,
+                bar_no      INTEGER
+            );
+        """)
+
+        # DAILY Tabelle
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                datum TEXT NOT NULL UNIQUE,
+                umsatz_total REAL NOT NULL DEFAULT 0,
+                bar1 REAL NOT NULL DEFAULT 0,
+                bar2 REAL NOT NULL DEFAULT 0,
+                bar3 REAL NOT NULL DEFAULT 0,
+                bar4 REAL NOT NULL DEFAULT 0,
+                bar5 REAL NOT NULL DEFAULT 0,
+                bar6 REAL NOT NULL DEFAULT 0,
+                bar7 REAL NOT NULL DEFAULT 0,
+                kasse1_cash REAL NOT NULL DEFAULT 0,
+                kasse1_card REAL NOT NULL DEFAULT 0,
+                kasse2_cash REAL NOT NULL DEFAULT 0,
+                kasse2_card REAL NOT NULL DEFAULT 0,
+                kasse3_cash REAL NOT NULL DEFAULT 0,
+                kasse3_card REAL NOT NULL DEFAULT 0,
+                garderobe_total REAL NOT NULL DEFAULT 0
+            );
+        """)
+
+        # SETUP Tabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS setup (
                 key TEXT PRIMARY KEY,
@@ -69,18 +120,31 @@ def migrate():
             );
         """)
 
-        _set_version(c, 1)
+        # Schema-Version setzen
+        target_ver = 2
+        if ver < target_ver:
+            _set_version(c, target_ver)
+
         cn.commit()
 
 
+# ---------- Setup ----------
 def setup_db():
+    """
+    Initialisiert die Datenbank:
+    - legt Datei und Backup-Verzeichnis an
+    - sichert DB vor Migration
+    - führt Migration durch
+    """
     if not Path(DB_PATH).exists():
         Path(DB_PATH).touch()
 
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    backup_file = BACKUP_DIR / f"gastro.db.bak_{int(time.time())}"
     try:
-        shutil.copyfile(DB_PATH, BACKUP_DIR / f"gastro.db.bak_{int(time.time())}")
+        shutil.copyfile(DB_PATH, backup_file)
+        print(f"[Backup] Datenbank gesichert als: {backup_file}")
     except Exception as e:
-        print(f"Backup-Fehler: {e}")
+        print(f"[WARNUNG] Backup konnte nicht erstellt werden: {e}")
 
     migrate()
