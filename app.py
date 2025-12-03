@@ -14,7 +14,7 @@ from core.config import APP_NAME, APP_VERSION
 
 st.markdown("""
     <style>
-    /* Zeigt die Sidebar IMMER an, selbst wenn eingeklappt */
+    /* Sidebar dauerhaft anzeigen und Collapse-Button ausblenden */
     [data-testid="stSidebar"] {
         min-width: 250px !important;
         max-width: 250px !important;
@@ -26,6 +26,10 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# Force-Initialisierung der Sidebar
+with st.sidebar:
+    st.empty()
 
 
 # ---------------- Initial Setup ----------------
