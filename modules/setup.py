@@ -32,10 +32,10 @@ def render_setup():
             if name:
                 with conn() as c:
                     c.execute("""
-                        INSERT INTO setup (key, value) VALUES (?, ?) 
+                        INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?) 
                     """, ("org_name", name))
                     c.execute("""
-                        INSERT INTO setup (key, value) VALUES (?, ?) 
+                        INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?) 
                     """, ("org_address", adresse or ""))
                 st.success("Setup abgeschlossen 🎉")
                 st.session_state["auth"] = False  # Damit regulärer Login folgt
