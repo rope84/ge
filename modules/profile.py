@@ -11,7 +11,6 @@ from core.config import APP_NAME, APP_VERSION
 # DB-Helpers
 # -------------------------------
 def _fetch_user(username: str):
-    """Lädt Benutzerdaten aus der DB."""
     with conn() as cn:
         c = cn.cursor()
         return c.execute("""
@@ -22,15 +21,14 @@ def _fetch_user(username: str):
         """, (username.strip(),)).fetchone()
 
 
-def _update_user_profile(username: str, first_name: str, last_name: str, email: str):
-    """Aktualisiert Profilinformationen (Name, E-Mail)."""
+def _update_user_profile(old_username: str, new_username: str, first_name: str, last_name: str, email: str):
     with conn() as cn:
         c = cn.cursor()
         c.execute("""
             UPDATE users
-            SET first_name=?, last_name=?, email=?
+            SET username=?, first_name=?, last_name=?, email=?
             WHERE username=?
-        """, (first_name.strip(), last_name.strip(), email.strip(), username))
+        """, (new_username.strip(), first_name.strip(), last_name.strip(), email.strip(), old_username))
         cn.commit()
 
 
@@ -62,11 +60,21 @@ def render_profile(username: str):
         return
 
     uid, uname, first_name, last_name, email, role = row
+    scope = st.session_state.get("scope", "-")
+
+    st.info(f"🛡️ Rolle: **{role}**  |  🧭 Rechte: **{scope or '–'}**")
+
     tabs = st.tabs(["🪪 Profil", "🔐 Passwort ändern"])
 
     # ------------------ TAB: PROFIL ------------------
     with tabs[0]:
         section_title("Persönliche Daten")
+
+        if st.checkbox("Ich möchte meinen Benutzernamen ändern"):
+            new_username = st.text_input("Benutzername", value=uname)
+        else:
+            new_username = uname
+            st.text_input("Benutzername", value=uname, disabled=True)
 
         col1, col2 = st.columns(2)
         new_first = col1.text_input("Vorname", value=first_name or "", placeholder="z. B. Roman")
@@ -74,8 +82,11 @@ def render_profile(username: str):
         new_email = st.text_input("E-Mail-Adresse", value=email or "", placeholder="z. B. roman@example.com")
 
         if st.button("💾 Änderungen speichern", use_container_width=True, key="btn_profile_save"):
-            _update_user_profile(username, new_first, new_last, new_email)
+            _update_user_profile(uname, new_username, new_first, new_last, new_email)
             st.success("Profil erfolgreich aktualisiert!")
+            if new_username != uname:
+                st.warning("🔁 Der Benutzername wurde geändert. Bitte neu anmelden.")
+                st.session_state.clear()
 
     # ------------------ TAB: PASSWORT ------------------
     with tabs[1]:
