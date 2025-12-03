@@ -1,10 +1,12 @@
 # core/auth.py
+
 import re
 import hashlib
-import streamlit as st
 import importlib
 from datetime import datetime
 from typing import Optional, Dict, Tuple, List
+
+import streamlit as st
 
 from core.db import conn
 
@@ -22,7 +24,6 @@ def verify_pw(pw: str, ph: str) -> bool:
     if not ph:
         return False
     return hash_pw(pw) == (ph or "")
-
 
 # -----------------------------
 # Schema-Sicherung
