@@ -1,46 +1,43 @@
-# ui_theme.py
 from pathlib import Path
 import streamlit as st
 
-# =========================
-#  Farb- & Layout-Variablen
-# =========================
+# ============================
+# Farb- & Layout-Variablen
+# ============================
 PRIMARY_COLOR = "#0A84FF"
-ACCENT_COLOR  = "#E5E7EB"
-TEXT_COLOR    = "#E5E7EB"
-MUTED_COLOR   = "#9CA3AF"
-CARD_BG       = "#111827"
-BODY_BG       = "#0B0F18"
+ACCENT_COLOR = "#E5E7EB"
+TEXT_COLOR = "#E5E7EB"
+MUTED_COLOR = "#9CA3AF"
+CARD_BG = "#111827"
+BODY_BG = "#0B0F18"
 
 FONT_STACK = (
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, "
     "Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif"
 )
 
-_ASSETS_CSS     = Path(__file__).parent / "assets" / "style.css"
+_ASSETS_CSS = Path(__file__).parent / "assets" / "style.css"
 _CSS_LOADED_KEY = "_ge_theme_css_loaded"
 
 
-# =========================
-#  CSS laden
-# =========================
+# ============================
+# CSS aktivieren
+# ============================
 def use_theme() -> None:
-    """Einmalig pro Session CSS injizieren (Assets + Fallback)."""
+    """Einmal pro Session: CSS aus Assets + Fallback injizieren."""
     if st.session_state.get(_CSS_LOADED_KEY):
         return
 
     css = _DEFAULT_CSS()
 
-    # Externes Stylesheet (falls vorhanden) anhängen
     if _ASSETS_CSS.exists():
         try:
             css += "\n\n/* ---- assets/style.css ---- */\n" + _ASSETS_CSS.read_text(encoding="utf-8")
         except Exception:
             pass
 
-    # Global: „Pillen“, Badges, Deploy-Buttons etc. sicher entfernen (falls Stylesheet mal nicht geladen wird)
     css += """
-    /* ---- global pill/badge killer (sicherheitsnetz) ---- */
+    /* globale UI-Elemente entfernen */
     [data-testid="stStatusWidget"],
     [data-testid="stDecoration"],
     .stDeployButton,
@@ -48,6 +45,7 @@ def use_theme() -> None:
     .viewerBadge_link__qRIco,
     button[title="Manage app"],
     button[title="View source"] { display: none !important; }
+
     header [data-testid="stToolbar"] { display: none !important; }
     .block-container { padding-top: 16px !important; }
     """
@@ -56,12 +54,12 @@ def use_theme() -> None:
     st.session_state[_CSS_LOADED_KEY] = True
 
 
-# =========================
-#  UI-Helfer
-# =========================
+# ============================
+# UI-Komponenten
+# ============================
 def page_header(title: str, subtitle: str = "", icon: str | None = None) -> None:
     icon_html = f"<span class='ge-title-icon'>{icon}</span>" if icon else ""
-    sub_html  = f"<p>{subtitle}</p>" if subtitle else ""
+    sub_html = f"<p>{subtitle}</p>" if subtitle else ""
     st.markdown(
         f"""
         <div class="ge-page-header">
@@ -89,21 +87,22 @@ def small_footer(left_html: str) -> None:
 
 
 def metric_card(title: str, value: str, help_text: str = "") -> None:
+    help_block = f'<div class="ge-card-help">{help_text}</div>' if help_text else ""
     st.markdown(
         f"""
         <div class="ge-card">
             <div class="ge-card-title">{title}</div>
             <div class="ge-card-value">{value}</div>
-            {'<div class="ge-card-help">'+help_text+'</div>' if help_text else ""}
+            {help_block}
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-# =========================
-#  Fallback-CSS (falls assets/style.css fehlt)
-# =========================
+# ============================
+# Fallback-CSS (wenn style.css fehlt)
+# ============================
 def _DEFAULT_CSS() -> str:
     return f"""
     html, body, [class^="css"] {{
@@ -159,23 +158,24 @@ def _DEFAULT_CSS() -> str:
     .ge-card-value {{ font-size: 1.65rem; font-weight: 800; margin-top: 4px; }}
     .ge-card-help  {{ font-size: .8rem; color: {MUTED_COLOR}; margin-top: 6px; }}
 
-    /* Inputs / Buttons (dezente Apple-Optik) */
-    input[type="text"], input[type="password"]{{
-        border-radius:12px !important;
-        border:1px solid rgba(255,255,255,.18) !important;
-        padding:10px 12px !important; box-shadow:none !important;
-        background: rgba(255,255,255,.03) !important; color: {TEXT_COLOR} !important;
+    input[type="text"], input[type="password"] {{
+        border-radius: 12px !important;
+        border: 1px solid rgba(255,255,255,.18) !important;
+        padding: 10px 12px !important;
+        background: rgba(255,255,255,.03) !important;
+        color: {TEXT_COLOR} !important;
     }}
-    input[type="text"]:focus, input[type="password"]:focus{{
+    input[type="text"]:focus, input[type="password"]:focus {{
         border-color: {PRIMARY_COLOR} !important;
         box-shadow: 0 0 0 4px rgba(10,132,255,.25) !important;
     }}
-    button[kind="primary"]{{
-        border-radius:12px !important;
+    button[kind="primary"] {{
+        border-radius: 12px !important;
         background: {PRIMARY_COLOR} !important;
-        color:#fff !important; font-weight:600 !important;
+        color: #fff !important;
+        font-weight: 600 !important;
     }}
-    button[kind="primary"]:hover{{
+    button[kind="primary"]:hover {{
         filter: brightness(1.06);
         transform: translateY(-1px);
     }}
