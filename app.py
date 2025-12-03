@@ -248,7 +248,7 @@ def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
 
-    if not st.session_state.auth:
+    if not st.session_state.get("auth"):
         login_screen()
     else:
         sidebar()
