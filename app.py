@@ -12,6 +12,15 @@ from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
+st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] button[title="Collapse sidebar"] {
+        display: none;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+
 # ---------------- Initial Setup ----------------
 setup_db()  # DB-Datei + Basis vorhanden
 
@@ -36,7 +45,7 @@ def import_modules():
         try:
             mod = importlib.import_module(qualified_name)
             mod = importlib.reload(mod)
-            fn = getattr(mod, f"render_{base}")
+            fn = getattr(mod, f"render_{base}")  # z.B. render_start()
             modules[base] = fn
 
             file_path = Path(inspect.getfile(mod))
@@ -51,6 +60,7 @@ def import_modules():
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
+    # Wichtig: cashflow statt abrechnung laden
     for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
         try_import(f"modules.{mod_name}")
 
@@ -116,9 +126,10 @@ def login_screen():
     except Exception as e:
         st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
 
+    # Eigentliche Anmeldung
     try:
         auth = _lazy_auth()
-        ok, role, _scope = auth._do_login(u, p)
+        ok, role, _scope = auth._do_login(u, p)  # (ok, role, functions)
     except Exception as e:
         st.error("Login-Fehler (interner Ausnahmefehler).")
         st.exception(e)
@@ -193,12 +204,14 @@ def sidebar():
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
+        # --- Rechte für Inventur prüfen ---
         funcs = (st.session_state.get("scope") or "").lower()
         role = (st.session_state.get("role") or "").lower()
 
         display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
 
         if ("inventur" in funcs) or (role == "admin"):
+            # Inventur vor Profil einfügen
             display_pages.insert(3, "Inventur")
 
         if role == "admin":
@@ -217,7 +230,6 @@ def sidebar():
             logout()
 
         fixed_footer()
-
 
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
@@ -243,16 +255,21 @@ def route():
     if not mod_func:
         st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
         if mod_err:
-            with st.expander(f"Details zu Ladefehler '{mod_key}'", expanded=False):
+            with st.expander(
+                f"Details zu Ladefehler '{mod_key}'", expanded=False
+            ):
                 st.code(mod_err, language="text")
         return
 
     try:
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
-        elif mod_key in ["cashflow", "dashboard"]:
+        elif mod_key == "cashflow":
+            mod_func()
+        elif mod_key == "dashboard":
             mod_func()
         elif mod_key == "inventur":
+            # Einfach Username übergeben, Rolle in Session
             mod_func(st.session_state.username or "unknown")
         elif mod_key == "profile":
             mod_func(st.session_state.username or "")
