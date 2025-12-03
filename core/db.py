@@ -54,26 +54,26 @@ def migrate():
         _ensure_schema_migrations(c)
         ver = _get_version(c)
 
-        # USERS Tabelle
+        # USERS Tabelle immer korrekt definieren
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username    TEXT UNIQUE NOT NULL,
                 passhash    TEXT NOT NULL,
-                role        TEXT NOT NULL DEFAULT 'user',
-                scope       TEXT DEFAULT '',
+                functions   TEXT NOT NULL DEFAULT '',
+                status      TEXT DEFAULT 'active',
                 email       TEXT DEFAULT '',
                 first_name  TEXT DEFAULT '',
                 last_name   TEXT DEFAULT ''
             );
         """)
-        _add_column_if_missing(c, "users", "passhash", "TEXT NOT NULL DEFAULT ''")
-        _add_column_if_missing(c, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
-        _add_column_if_missing(c, "users", "scope", "TEXT DEFAULT ''")
+
+        # Fehlende Spalten automatisch hinzufügen
+        _add_column_if_missing(c, "users", "functions", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(c, "users", "status", "TEXT DEFAULT 'active'")
         _add_column_if_missing(c, "users", "email", "TEXT DEFAULT ''")
         _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT '')")
-        _add_column_if_missing(c, "users", "status", "TEXT NOT NULL DEFAULT 'active'")
+        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
 
 
         # EMPLOYEES Tabelle
@@ -89,8 +89,6 @@ def migrate():
         """)
 
         # SETUP Tabelle
-
-        # SETUP Tabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS setup (
                 key TEXT PRIMARY KEY,
@@ -98,8 +96,7 @@ def migrate():
             );
         """)
 
-
-# DAILY Tabelle
+        # DAILY Tabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS daily(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +120,7 @@ def migrate():
         """)
 
         # Schema-Version setzen
-        target_ver = 2
+        target_ver = 3
         if ver < target_ver:
             _set_version(c, target_ver)
 
