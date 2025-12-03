@@ -11,10 +11,9 @@ from core.db import setup_db, conn
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
-from modules import setup  # NEU importieren
 
-# ---------------- Initial Setup ----------------
 setup_db()
+
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
@@ -44,44 +43,12 @@ def import_modules():
 
     return modules, errors, loaded_meta
 
-modules, import_errors, import_meta = import_modules()  # DB-Datei + Basis vorhanden
+modules, import_errors, import_meta = import_modules()
 
-# ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
-try:
-    auth_mod = importlib.import_module("core.auth")
-    if hasattr(auth_mod, "ensure_admin_consistency"):
-        auth_mod.ensure_admin_consistency()
-    if hasattr(auth_mod, "seed_admin_if_empty"):
-        auth_mod.seed_admin_if_empty()
-except Exception:
-    # nicht blockieren – Details stehen im Streamlit-Log
-    pass
-
-
-def main():
-    st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-    use_theme()
-
-    # Prüfe, ob Setup notwendig ist
-    import sqlite3
-
-    def _has_users_table():
-        try:
-            with conn() as c:
-                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-                return c.fetchone() is not None
-        except:
-            return False
-
-    if not _has_users_table() or not st.session_state.get("setup_done"):
-        setup.render_setup()
-        return
-
-
-def _lazy_auth():
-    """core.auth erst laden, wenn wirklich gebraucht (verhindert Zyklen)."""
-    return importlib.import_module("core.auth")
-
+def logout():
+    st.session_state.clear()
+    init_session()
+    st.rerun()
 
 def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
@@ -92,7 +59,6 @@ def login_screen():
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
 
-    # Sichtbarer Mini-Diagnoseblock
     try:
         with conn() as cn:
             c = cn.cursor()
@@ -116,10 +82,9 @@ def login_screen():
     except Exception as e:
         st.caption(f"Debug · DB-Check fehlgeschlagen: {e}")
 
-    # Eigentliche Anmeldung
     try:
-        auth = _lazy_auth()
-        ok, role, _scope = auth._do_login(u, p)  # (ok, role, functions)
+        auth = importlib.import_module("core.auth")
+        ok, role, _scope = auth._do_login(u, p)
     except Exception as e:
         st.error("Login-Fehler (interner Ausnahmefehler).")
         st.exception(e)
@@ -132,8 +97,6 @@ def login_screen():
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Status (muss 'active' sein) und Passwort.")
 
-
-# ---------------- Fixed Footer ----------------
 def fixed_footer():
     st.markdown(
         f"""
@@ -171,8 +134,6 @@ def fixed_footer():
         """,
         unsafe_allow_html=True,
     )
-
-
 # ---------------- Sidebar ----------------
 def sidebar():
     if not st.session_state.get("auth"):
@@ -194,14 +155,12 @@ def sidebar():
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        # --- Rechte für Inventur prüfen ---
         funcs = (st.session_state.get("scope") or "").lower()
         role = (st.session_state.get("role") or "").lower()
 
         display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
 
         if ("inventur" in funcs) or (role == "admin"):
-            # Inventur vor Profil einfügen
             display_pages.insert(3, "Inventur")
 
         if role == "admin":
@@ -216,7 +175,7 @@ def sidebar():
         )
 
         st.divider()
-        if st.session_state.auth and st.button("Logout", use_container_width=True):
+        if st.session_state.get("auth") and st.button("Logout", use_container_width=True):
             logout()
 
         fixed_footer()
@@ -231,7 +190,6 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
     mod_key = DISPLAY_TO_MODULE.get(display_key)
@@ -245,21 +203,16 @@ def route():
     if not mod_func:
         st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
         if mod_err:
-            with st.expander(
-                f"Details zu Ladefehler '{mod_key}'", expanded=False
-            ):
+            with st.expander(f"Details zu Ladefehler '{mod_key}'", expanded=False):
                 st.code(mod_err, language="text")
         return
 
     try:
         if mod_key == "start":
             mod_func(st.session_state.username or "Gast")
-        elif mod_key == "cashflow":
-            mod_func()
-        elif mod_key == "dashboard":
+        elif mod_key in ["cashflow", "dashboard"]:
             mod_func()
         elif mod_key == "inventur":
-            # Einfach Username übergeben, Rolle in Session
             mod_func(st.session_state.username or "unknown")
         elif mod_key == "profile":
             mod_func(st.session_state.username or "")
@@ -273,19 +226,40 @@ def route():
     except Exception:
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
-
+# ---------------- Session Init ----------------
+def init_session():
+    s = st.session_state
+    s.setdefault("auth", False)
+    s.setdefault("username", "")
+    s.setdefault("role", "guest")
+    s.setdefault("scope", "")
+    s.setdefault("nav_choice", "Start")
 
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
+    init_session()
+
+    # Sicherer Setup-Check – prüft, ob Tabelle 'users' existiert
+    def _has_users_table():
+        try:
+            with conn() as c:
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+                return c.fetchone() is not None
+        except:
+            return False
+
+    if not _has_users_table() or not st.session_state.get("setup_done"):
+        setup = importlib.import_module("modules.setup")
+        setup.render_setup()
+        return
 
     if not st.session_state.get("auth"):
         login_screen()
     else:
         sidebar()
         route()
-
 
 if __name__ == "__main__":
     main()
