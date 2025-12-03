@@ -757,3 +757,4 @@ def render_admin():
 
     st.markdown("---")
     st.caption(f"© 2025 Roman Petek – {APP_NAME} {APP_VERSION}")
+ 
