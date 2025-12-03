@@ -1,6 +1,7 @@
 import streamlit as st
 from core.db import conn
 from core.auth import _hash_password
+import time
 
 def render_setup():
     st.title("🔧 Erst-Setup: Gastro Essentials")
@@ -23,14 +24,21 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    # Admin wirklich REPLACE → überschreibt alten Admin
-                    c.execute("""
-                        INSERT OR REPLACE INTO users (username, passhash, role, status)
-                        VALUES (?, ?, 'admin', 'active')
-                    """, (admin_user.strip(), _hash_password(admin_pass)))
+                    # Existenz prüfen, um Fehler bei REPLACE zu vermeiden
+                    exists = c.execute("SELECT 1 FROM users WHERE username = ?", (admin_user.strip(),)).fetchone()
+                    if exists:
+                        c.execute("UPDATE users SET passhash=?, functions='admin', status='active' WHERE username=?",
+                                  (_hash_password(admin_pass), admin_user.strip()))
+                    else:
+                        c.execute("""
+                            INSERT INTO users (username, passhash, functions, status)
+                            VALUES (?, ?, 'admin', 'active')
+                        """, (admin_user.strip(), _hash_password(admin_pass)))
+
                 st.success("Admin erfolgreich angelegt! 🎉")
                 st.session_state["setup_step"] = 2
                 st.rerun()
+
             except Exception as e:
                 st.error(f"Fehler beim Erstellen des Admins: {e}")
                 return
@@ -51,16 +59,12 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    # Persistente Setup-Daten
                     c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_name", orgname))
                     c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_address", orgaddr or ""))
                     c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("setup_done", "yes"))
 
                 st.success("🎉 Setup erfolgreich abgeschlossen!")
                 st.balloons()
-
-                # Nach 2 Sekunden → weiter zum Login
-                import time
                 time.sleep(2)
                 st.session_state.clear()
                 st.rerun()
