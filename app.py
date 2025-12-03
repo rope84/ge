@@ -1,144 +1,230 @@
+# app.py
+
 import traceback
 import datetime
 import importlib
 import inspect
-import streamlit as st
 from pathlib import Path
+import streamlit as st
 
 from core.db import setup_db, conn
 from core.ui_theme import use_theme
-from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
-# Datenbank vorbereiten
+# ---------------- Initial Setup ----------------
 setup_db()
 
-def setup_completed() -> bool:
+try:
+    auth_mod = importlib.import_module("core.auth")
+    if hasattr(auth_mod, "ensure_admin_consistency"):
+        auth_mod.ensure_admin_consistency()
+    if hasattr(auth_mod, "seed_admin_if_empty"):
+        auth_mod.seed_admin_if_empty()
+except Exception as e:
+    print("[WARNUNG] Auth-Initialisierung fehlgeschlagen:", e)
+
+# ---------------- Setup-Erkennung ----------------
+def is_setup_done() -> bool:
     try:
         with conn() as c:
             row = c.execute("SELECT value FROM setup WHERE key='setup_done'").fetchone()
-            return bool(row and row[0].lower() == "yes")
-    except:
+            return row and row[0].lower() == "yes"
+    except Exception:
         return False
 
-def render_setup():
-    mod = importlib.import_module("modules.setup")
-    mod.render_setup()
 
+# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
-    for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
+
+    def try_import(qualified_name: str):
+        base = qualified_name.split(".")[-1]
         try:
-            mod = importlib.import_module(f"modules.{mod_name}")
+            mod = importlib.import_module(qualified_name)
             mod = importlib.reload(mod)
-            fn = getattr(mod, f"render_{mod_name}", None)
-            modules[mod_name] = fn
+            fn = getattr(mod, f"render_{base}")
+            modules[base] = fn
         except Exception as e:
-            modules[mod_name] = None
-            errors[mod_name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
-    return modules, errors
+            modules[base] = None
+            errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
 
-modules, import_errors = import_modules()
+    for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin", "setup"]:
+        try_import(f"modules.{mod_name}")
 
+    return modules, errors, loaded_meta
+
+
+modules, import_errors, import_meta = import_modules()
+
+# ---------------- Session Init ----------------
 def init_session():
     s = st.session_state
     s.setdefault("auth", False)
     s.setdefault("username", "")
-    s.setdefault("functions", "")
+    s.setdefault("role", "guest")
+    s.setdefault("scope", "")
     s.setdefault("nav_choice", "Start")
+
 
 init_session()
 
+# ---------------- Auth ----------------
 def logout():
     st.session_state.clear()
     init_session()
     st.rerun()
 
+
+def _lazy_auth():
+    return importlib.import_module("core.auth")
+
+
 def login_screen():
+    from login import render_login_form
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
     if not pressed:
         return
+
     if not u or not p:
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
 
     try:
-        auth = importlib.import_module("core.auth")
-        ok, role, _ = auth._do_login(u, p)
+        auth = _lazy_auth()
+        ok, role, scope = auth._do_login(u, p)
     except Exception as e:
-        st.error("Login-Fehler")
+        st.error("Login-Fehler.")
         st.exception(e)
         return
 
     if ok:
         st.session_state["auth"] = True
         st.session_state["username"] = u
-        st.session_state["functions"] = role
+        st.session_state["role"] = role or "user"
+        st.session_state["scope"] = scope or ""
         st.rerun()
     else:
-        st.error("Login fehlgeschlagen. Benutzername oder Passwort falsch.")
+        st.error("❌ Login fehlgeschlagen. Prüfe Benutzername, Passwort und Status.")
 
-def fixed_footer():
-    st.markdown(
-        f"""
-        <style>
-        .footer {{
-            position: fixed;
-            bottom: 10px;
-            left: 12px;
-            font-size: 12px;
-            color: gray;
-            opacity: 0.85;
-        }}
-        </style>
-        <div class="footer">
-            👤 {st.session_state.get('username', 'Gast')}<br>
-            Rechte: {st.session_state.get('functions', '—')}<br>
-            {APP_NAME} {APP_VERSION}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
+# ---------------- Sidebar ----------------
 def sidebar():
     if not st.session_state.get("auth"):
         return
+
     with st.sidebar:
+        query_params = st.query_params
+        if "nav_choice" in query_params:
+            st.session_state["nav_choice"] = query_params["nav_choice"]
+            st.query_params.clear()
+
+        if st.session_state.get("nav_to"):
+            st.session_state["nav_choice"] = st.session_state.pop("nav_to")
+
+        if st.session_state.get("go_profile"):
+            st.session_state["nav_choice"] = "Profil"
+            del st.session_state["go_profile"]
+
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
-        if "inventur" in st.session_state.get("functions", ""):
-            pages.append("Inventur")
-        if st.session_state.get("functions") == "admin":
-            pages.append("Admin-Cockpit")
+        funcs = (st.session_state.get("scope") or "").lower()
+        role = (st.session_state.get("role") or "").lower()
 
-        st.radio("Navigation", pages, key="nav_choice", label_visibility="collapsed")
+        display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+
+        if ("inventur" in funcs) or (role == "admin"):
+            display_pages.insert(3, "Inventur")
+
+        if role == "admin":
+            display_pages.append("Admin-Cockpit")
+
+        st.radio(
+            "Navigation",
+            display_pages,
+            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
+            label_visibility="collapsed",
+            key="nav_choice",
+        )
+
         st.divider()
         if st.button("Logout", use_container_width=True):
             logout()
-        fixed_footer()
+
+        st.markdown(
+            f"""
+            <div style='font-size: 12px; color: gray; margin-top: 24px'>
+                👤 {st.session_state.get('username', 'Gast')}<br>
+                Rolle: <b>{st.session_state.get('role', 'user')}</b><br>
+                <i>{APP_NAME} {APP_VERSION}</i>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# ---------------- Routing ----------------
+DISPLAY_TO_MODULE = {
+    "start": "start",
+    "abrechnung": "cashflow",
+    "dashboard": "dashboard",
+    "inventur": "inventur",
+    "profil": "profile",
+    "admin-cockpit": "admin",
+}
+
 
 def route():
-    page = st.session_state.get("nav_choice", "start").lower()
-    key = {"abrechnung": "cashflow", "admin-cockpit": "admin"}.get(page, page)
-    func = modules.get(key)
-    if func:
-        func()
-    else:
-        st.error(f"Modul '{key}' fehlt")
+    display_key = (st.session_state.get("nav_choice") or "Start").lower()
+    mod_key = DISPLAY_TO_MODULE.get(display_key)
+    if not mod_key:
+        st.error(f"⚠️ Ungültige Seite: {display_key}")
+        return
 
+    mod_func = modules.get(mod_key)
+    mod_err = import_errors.get(mod_key)
+
+    if not mod_func:
+        st.error(f"❌ Modul '{mod_key}.py' konnte nicht geladen werden.")
+        if mod_err:
+            with st.expander(f"Details zu Ladefehler '{mod_key}'", expanded=False):
+                st.code(mod_err, language="text")
+        return
+
+    try:
+        if mod_key == "start":
+            mod_func(st.session_state.username or "Gast")
+        elif mod_key in ["cashflow", "dashboard"]:
+            mod_func()
+        elif mod_key == "inventur":
+            mod_func(st.session_state.username or "unknown")
+        elif mod_key == "profile":
+            mod_func(st.session_state.username or "")
+        elif mod_key == "admin":
+            if st.session_state.role != "admin":
+                st.error("Kein Zugriff. Adminrechte erforderlich.")
+            else:
+                mod_func()
+        else:
+            st.error(f"Seite nicht implementiert: {mod_key}")
+    except Exception:
+        st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
+        st.code(traceback.format_exc(), language="text")
+
+
+# ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
 
-    if not setup_completed():
-        render_setup()
-    elif not st.session_state.auth:
+    if not is_setup_done():
+        modules["setup"]()
+    elif not st.session_state.get("auth"):
         login_screen()
     else:
         sidebar()
         route()
+
 
 if __name__ == "__main__":
     main()
