@@ -8,6 +8,9 @@ import streamlit as st
 
 from core.db import conn
 
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
 # -----------------------------
 # Password Policy & Hashing
 # -----------------------------
