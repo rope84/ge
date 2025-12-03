@@ -14,7 +14,14 @@ from core.config import APP_NAME, APP_VERSION
 
 st.markdown("""
     <style>
-    section[data-testid="stSidebar"] button[title="Collapse sidebar"] {
+    /* Zeigt die Sidebar IMMER an, selbst wenn eingeklappt */
+    [data-testid="stSidebar"] {
+        min-width: 250px !important;
+        max-width: 250px !important;
+        width: 250px !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebar"] button[title="Collapse sidebar"] {
         display: none;
     }
     </style>
