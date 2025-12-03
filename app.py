@@ -33,15 +33,17 @@ def main():
     use_theme()
 
     # Prüfe, ob Setup notwendig ist
-    # Sicherer Setup-Check (wenn users-Tabelle fehlt)
-    try:
-        with conn() as c:
-            c.row_factory = lambda cursor, row: row[0]
-            user_count = c.execute("SELECT COUNT(*) FROM users").fetchone()
-    except Exception:
-        user_count = 0  # Tabelle fehlt => Setup starten
+    import sqlite3
 
-    if user_count == 0 and not st.session_state.get("setup_done"):
+    def _has_users_table():
+        try:
+            with conn() as c:
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+                return c.fetchone() is not None
+        except:
+            return False
+
+    if not _has_users_table() or not st.session_state.get("setup_done"):
         setup.render_setup()
         return
 
