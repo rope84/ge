@@ -4,13 +4,14 @@ from core.auth import _hash_password
 import time
 
 def render_setup():
-    st.title("🔧 Erst-Setup: Gastro Essentials")
+    st.title("🔧 Erst-Setup · Gastro Essentials")
 
+    # Fortschritt speichern
     step = st.session_state.get("setup_step", 1)
 
-    # -----------------------------------
-    # STEP 1 — ADMIN USER ANLEGEN
-    # -----------------------------------
+    # --------------------------------------------------------
+    # STEP 1 – ADMIN ACCOUNT ANLEGEN
+    # --------------------------------------------------------
     if step == 1:
         st.subheader("1️⃣ Admin-Benutzer anlegen")
 
@@ -24,20 +25,31 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    exists = c.execute("SELECT 1 FROM users WHERE username = ?", (admin_user.strip(),)).fetchone()
+                    admin_user_clean = admin_user.strip()
+
+                    # Prüfen ob bereits vorhanden
+                    exists = c.execute(
+                        "SELECT 1 FROM users WHERE username=?",
+                        (admin_user_clean,)
+                    ).fetchone()
+
+                    pw_hash = _hash_password(admin_pass)
+
                     if exists:
+                        # Update bestehender User
                         c.execute("""
                             UPDATE users
-                            SET passhash = ?, functions = 'admin', role = 'admin', status = 'active'
-                            WHERE username = ?
-                        """, (_hash_password(admin_pass), admin_user.strip()))
+                            SET passhash=?, functions='admin', status='active'
+                            WHERE username=?
+                        """, (pw_hash, admin_user_clean))
                     else:
+                        # Neuen Admin anlegen
                         c.execute("""
-                            INSERT INTO users (username, passhash, functions, role, status)
-                            VALUES (?, ?, 'admin', 'admin', 'active')
-                        """, (admin_user.strip(), _hash_password(admin_pass)))
+                            INSERT INTO users (username, passhash, functions, status)
+                            VALUES (?, ?, 'admin', 'active')
+                        """, (admin_user_clean, pw_hash))
 
-                st.success("✅ Admin erfolgreich angelegt! Weiter mit Schritt 2 ...")
+                st.success("🎉 Admin erfolgreich angelegt!")
                 st.session_state["setup_step"] = 2
                 st.rerun()
 
@@ -45,32 +57,34 @@ def render_setup():
                 st.error(f"❌ Fehler beim Erstellen des Admins: {e}")
                 return
 
-    # -----------------------------------
-    # STEP 2 — BETRIEBSPARAMETER
-    # -----------------------------------
+    # --------------------------------------------------------
+    # STEP 2 – BETRIEBSPARAMETER
+    # --------------------------------------------------------
     elif step == 2:
         st.subheader("2️⃣ Grundparameter des Betriebs")
 
-        orgname = st.text_input("🧾 Name des Betriebs", key="setup_orgname")
-        orgaddr = st.text_area("📍 Adresse", key="setup_orgaddr")
+        org_name = st.text_input("🧾 Name des Betriebs", key="setup_orgname")
+        org_addr = st.text_area("📍 Adresse des Betriebs", key="setup_orgaddr")
 
         if st.button("✅ Setup abschließen", type="primary"):
-            if not orgname:
-                st.error("Bitte den Namen des Betriebs eingeben.")
+            if not org_name:
+                st.error("Bitte gib den Namen des Betriebs ein.")
                 return
 
             try:
                 with conn() as c:
-                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_name", orgname))
-                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_address", orgaddr or ""))
-                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("setup_done", "yes"))
+                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES ('org_name', ?)", (org_name,))
+                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES ('org_address', ?)", (org_addr or "",))
+                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES ('setup_done', 'yes')")
 
-                st.success("🎉 Setup erfolgreich abgeschlossen! Weiterleitung zum Login ...")
+                st.success("🎉 Setup erfolgreich abgeschlossen!")
                 st.balloons()
-                time.sleep(2)
+                time.sleep(1.5)
+
+                # Session zurücksetzen → führt beim nächsten Reload zum Login
                 st.session_state.clear()
                 st.rerun()
 
             except Exception as e:
-                st.error(f"❌ Fehler beim Abschließen des Setups: {e}")
+                st.error(f"❌ Fehler beim Speichern der Daten: {e}")
                 return
