@@ -1,3 +1,4 @@
+
 import re
 import streamlit as st
 
@@ -62,7 +63,25 @@ def render_profile(username: str):
     uid, uname, first_name, last_name, email, role = row
     scope = st.session_state.get("scope", "-")
 
-    st.info(f"🛡️ Rolle: **{role}**  |  🧭 Rechte: **{scope or '–'}**")
+    # Rechte grafisch anzeigen
+    with st.container():
+        st.markdown(f"""
+        <div style="
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 20px;
+        ">
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">
+                🛡️ Aktuelle Zugriffsrechte
+            </div>
+            <div style="font-size: 14px;">
+                <strong>Rolle:</strong> <code>{role}</code><br>
+                <strong>Rechte:</strong> <code>{scope}</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     tabs = st.tabs(["🪪 Profil", "🔐 Passwort ändern"])
 
