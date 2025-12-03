@@ -12,36 +12,6 @@ from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
-st.markdown("""
-    <style>
-    [data-testid="stSidebar"] {
-        min-width: 250px !important;
-        max-width: 250px !important;
-        width: 250px !important;
-        visibility: visible !important;
-        display: block !important;
-    }
-    [data-testid="stSidebar"] button[title="Collapse sidebar"] {
-        display: none;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Debug-Zeile in Sidebar erzwingen
-with st.sidebar:
-    st.info("✅ Sidebar geladen")
-    st.markdown("<!-- Sidebar sichtbar -->")
-
-
-
-st.markdown("""
-    <style>
-    section[data-testid="stSidebar"] button[title="Collapse sidebar"] {
-        display: none;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 
 # ---------------- Initial Setup ----------------
 setup_db()  # DB-Datei + Basis vorhanden
