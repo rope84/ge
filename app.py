@@ -33,70 +33,17 @@ def main():
     use_theme()
 
     # Prüfe, ob Setup notwendig ist
-    with conn() as c:
-        c.row_factory = lambda cursor, row: row[0]
-        user_count = c.execute("SELECT COUNT(*) FROM users").fetchone()
+    # Sicherer Setup-Check (wenn users-Tabelle fehlt)
+    try:
+        with conn() as c:
+            c.row_factory = lambda cursor, row: row[0]
+            user_count = c.execute("SELECT COUNT(*) FROM users").fetchone()
+    except Exception:
+        user_count = 0  # Tabelle fehlt => Setup starten
 
     if user_count == 0 and not st.session_state.get("setup_done"):
         setup.render_setup()
         return
-
-    if not st.session_state.auth:
-        login_screen()
-    else:
-        sidebar()
-        route()
-
-# ---------------- Dynamic Module Import (Hot Reload) ----------------
-def import_modules():
-    modules, errors, loaded_meta = {}, {}, {}
-
-    def try_import(qualified_name: str):
-        base = qualified_name.split(".")[-1]
-        try:
-            mod = importlib.import_module(qualified_name)
-            mod = importlib.reload(mod)
-            fn = getattr(mod, f"render_{base}")  # z.B. render_start()
-            modules[base] = fn
-
-            file_path = Path(inspect.getfile(mod))
-            loaded_meta[base] = {
-                "file": str(file_path),
-                "mtime": datetime.datetime.fromtimestamp(
-                    file_path.stat().st_mtime
-                ).isoformat(sep=" ", timespec="seconds"),
-                "qualified": qualified_name,
-            }
-        except Exception as e:
-            modules[base] = None
-            errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
-
-    # Wichtig: cashflow statt abrechnung laden
-    for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin"]:
-        try_import(f"modules.{mod_name}")
-
-    return modules, errors, loaded_meta
-
-
-modules, import_errors, import_meta = import_modules()
-
-# ---------------- Session Init ----------------
-def init_session():
-    s = st.session_state
-    s.setdefault("auth", False)
-    s.setdefault("username", "")
-    s.setdefault("role", "guest")
-    s.setdefault("scope", "")
-    s.setdefault("nav_choice", "Start")
-
-
-init_session()
-
-# ---------------- Auth ----------------
-def logout():
-    st.session_state.clear()
-    init_session()
-    st.rerun()
 
 
 def _lazy_auth():
