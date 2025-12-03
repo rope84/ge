@@ -24,7 +24,7 @@ def is_setup_complete():
     except Exception:
         return False
 
-# ---------------- Dynamic Module Import (Hot Reload) ----------------
+# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
 
@@ -94,6 +94,8 @@ def login_screen():
 
     if ok:
         st.session_state["role"] = role or "user"
+        st.session_state["auth"] = True
+        st.session_state["username"] = u
         st.rerun()
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Status und Passwort.")
