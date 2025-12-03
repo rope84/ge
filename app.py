@@ -8,11 +8,10 @@ from pathlib import Path
 import streamlit as st
 
 from core.db import setup_db, conn
+setup_db()
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
-
-setup_db()
 
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
