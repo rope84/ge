@@ -14,7 +14,37 @@ from core.config import APP_NAME, APP_VERSION
 from modules import setup  # NEU importieren
 
 # ---------------- Initial Setup ----------------
-setup_db()  # DB-Datei + Basis vorhanden
+setup_db()
+# ---------------- Dynamic Module Import (Hot Reload) ----------------
+def import_modules():
+    modules, errors, loaded_meta = {}, {}, {}
+
+    def try_import(qualified_name: str):
+        base = qualified_name.split(".")[-1]
+        try:
+            mod = importlib.import_module(qualified_name)
+            mod = importlib.reload(mod)
+            fn = getattr(mod, f"render_{base}")
+            modules[base] = fn
+
+            file_path = Path(inspect.getfile(mod))
+            loaded_meta[base] = {
+                "file": str(file_path),
+                "mtime": datetime.datetime.fromtimestamp(
+                    file_path.stat().st_mtime
+                ).isoformat(sep=" ", timespec="seconds"),
+                "qualified": qualified_name,
+            }
+        except Exception as e:
+            modules[base] = None
+            errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
+
+    for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin", "setup"]:
+        try_import(f"modules.{mod_name}")
+
+    return modules, errors, loaded_meta
+
+modules, import_errors, import_meta = import_modules()  # DB-Datei + Basis vorhanden
 
 # ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
 try:
