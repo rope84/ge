@@ -86,7 +86,18 @@ def migrate():
             );
         """)
 
-        # DAILY Tabelle
+        # SETUP Tabelle
+
+        # SETUP Tabelle
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS setup (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+
+
+# DAILY Tabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS daily(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
