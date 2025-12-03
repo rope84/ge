@@ -30,6 +30,7 @@ st.markdown("""
 # Debug-Zeile in Sidebar erzwingen
 with st.sidebar:
     st.markdown("<!-- Sidebar sichtbar -->")
+    st.info("✅ Sidebar geladen")
 
 
 st.markdown("""
