@@ -14,12 +14,12 @@ from core.config import APP_NAME, APP_VERSION
 
 st.markdown("""
     <style>
-    /* Sidebar dauerhaft anzeigen und Collapse-Button ausblenden */
     [data-testid="stSidebar"] {
         min-width: 250px !important;
         max-width: 250px !important;
         width: 250px !important;
         visibility: visible !important;
+        display: block !important;
     }
     [data-testid="stSidebar"] button[title="Collapse sidebar"] {
         display: none;
@@ -27,9 +27,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Force-Initialisierung der Sidebar
+# Debug-Zeile in Sidebar erzwingen
 with st.sidebar:
-    st.empty()
+    st.markdown("<!-- Sidebar sichtbar -->")
+
+
+st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] button[title="Collapse sidebar"] {
+        display: none;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 
 # ---------------- Initial Setup ----------------
