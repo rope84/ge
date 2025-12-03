@@ -10,16 +10,9 @@ from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 
-# ------------------------------------------------------
-# ✅ Datenbank vorbereiten
-# ------------------------------------------------------
+# Datenbank vorbereiten
 setup_db()
-db_path = Path("gastro.db").resolve()
-print(f"📦 Verwendete SQLite-Datei: {db_path}")
 
-# ------------------------------------------------------
-# ✅ Setup prüfen
-# ------------------------------------------------------
 def setup_completed() -> bool:
     try:
         with conn() as c:
@@ -43,19 +36,19 @@ def import_modules():
         except Exception as e:
             modules[mod_name] = None
             errors[mod_name] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
-    return modules, errors, loaded_meta
+    return modules, errors
 
-modules, import_errors, import_meta = import_modules()
+modules, import_errors = import_modules()
 
 def init_session():
     s = st.session_state
     s.setdefault("auth", False)
     s.setdefault("username", "")
-    s.setdefault("role", "guest")
-    s.setdefault("scope", "")
+    s.setdefault("functions", "")
     s.setdefault("nav_choice", "Start")
 
 init_session()
+
 def logout():
     st.session_state.clear()
     init_session()
@@ -68,21 +61,22 @@ def login_screen():
     if not u or not p:
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
+
     try:
         auth = importlib.import_module("core.auth")
-        ok, role, scope = auth._do_login(u, p)
+        ok, role, _ = auth._do_login(u, p)
     except Exception as e:
-        st.error("Login-Fehler.")
+        st.error("Login-Fehler")
         st.exception(e)
         return
+
     if ok:
-        st.session_state.auth = True
-        st.session_state.username = u
-        st.session_state.role = role or "user"
-        st.session_state.scope = scope or ""
+        st.session_state["auth"] = True
+        st.session_state["username"] = u
+        st.session_state["functions"] = role
         st.rerun()
     else:
-        st.error("❌ Login fehlgeschlagen.")
+        st.error("Login fehlgeschlagen. Benutzername oder Passwort falsch.")
 
 def fixed_footer():
     st.markdown(
@@ -92,80 +86,47 @@ def fixed_footer():
             position: fixed;
             bottom: 10px;
             left: 12px;
-            width: 240px;
-            text-align: left;
             font-size: 12px;
             color: gray;
             opacity: 0.85;
-            z-index: 0;
-            pointer-events: none;
         }}
         </style>
         <div class="footer">
             👤 {st.session_state.get('username', 'Gast')}<br>
-            Rolle: {st.session_state.get('role', 'guest')}<br>
-            <span style='opacity:0.7'>{APP_NAME} {APP_VERSION}</span>
+            Rechte: {st.session_state.get('functions', '—')}<br>
+            {APP_NAME} {APP_VERSION}
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 def sidebar():
-    if not st.session_state.auth:
+    if not st.session_state.get("auth"):
         return
     with st.sidebar:
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        funcs = (st.session_state.get("scope") or "").lower()
-        role = (st.session_state.get("role") or "").lower()
+        pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+        if "inventur" in st.session_state.get("functions", ""):
+            pages.append("Inventur")
+        if st.session_state.get("functions") == "admin":
+            pages.append("Admin-Cockpit")
 
-        display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
-        if "inventur" in funcs or role == "admin":
-            display_pages.insert(3, "Inventur")
-        if role == "admin":
-            display_pages.append("Admin-Cockpit")
-
-        st.radio(
-            "Navigation",
-            display_pages,
-            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
-            label_visibility="collapsed",
-            key="nav_choice",
-        )
+        st.radio("Navigation", pages, key="nav_choice", label_visibility="collapsed")
         st.divider()
         if st.button("Logout", use_container_width=True):
             logout()
         fixed_footer()
 
 def route():
-    DISPLAY_TO_MODULE = {
-        "start": "start",
-        "abrechnung": "cashflow",
-        "dashboard": "dashboard",
-        "inventur": "inventur",
-        "profil": "profile",
-        "admin-cockpit": "admin"
-    }
-    display_key = (st.session_state.get("nav_choice") or "Start").lower()
-    mod_key = DISPLAY_TO_MODULE.get(display_key)
-    mod_func = modules.get(mod_key)
-    if not mod_func:
-        st.error(f"❌ Modul nicht gefunden: {mod_key}")
-        return
-    try:
-        if mod_key in ["start", "inventur", "profile"]:
-            mod_func(st.session_state.username)
-        elif mod_key == "admin":
-            if st.session_state.role != "admin":
-                st.error("Adminrechte erforderlich.")
-            else:
-                mod_func()
-        else:
-            mod_func()
-    except Exception:
-        st.error(f"❌ Laufzeitfehler in '{mod_key}'")
-        st.code(traceback.format_exc())
+    page = st.session_state.get("nav_choice", "start").lower()
+    key = {"abrechnung": "cashflow", "admin-cockpit": "admin"}.get(page, page)
+    func = modules.get(key)
+    if func:
+        func()
+    else:
+        st.error(f"Modul '{key}' fehlt")
 
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
