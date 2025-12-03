@@ -13,6 +13,21 @@ from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
 from modules import setup  # NEU importieren
 
+# ---------------- Initial Setup ----------------
+setup_db()  # DB-Datei + Basis vorhanden
+
+# ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
+try:
+    auth_mod = importlib.import_module("core.auth")
+    if hasattr(auth_mod, "ensure_admin_consistency"):
+        auth_mod.ensure_admin_consistency()
+    if hasattr(auth_mod, "seed_admin_if_empty"):
+        auth_mod.seed_admin_if_empty()
+except Exception:
+    # nicht blockieren – Details stehen im Streamlit-Log
+    pass
+
+
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
@@ -31,21 +46,6 @@ def main():
     else:
         sidebar()
         route()
-
-# ---------------- Initial Setup ----------------
-setup_db()  # DB-Datei + Basis vorhanden
-
-# ensure_admin_consistency LAZY & fehlertolerant nach DB-Setup
-try:
-    auth_mod = importlib.import_module("core.auth")
-    if hasattr(auth_mod, "ensure_admin_consistency"):
-        auth_mod.ensure_admin_consistency()
-    if hasattr(auth_mod, "seed_admin_if_empty"):
-        auth_mod.seed_admin_if_empty()
-except Exception:
-    # nicht blockieren – Details stehen im Streamlit-Log
-    pass
-
 
 # ---------------- Dynamic Module Import (Hot Reload) ----------------
 def import_modules():
