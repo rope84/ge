@@ -1,24 +1,22 @@
-# dashboard.py
 import streamlit as st
 import pandas as pd
 import datetime as dt
 import plotly.express as px
+
 from core.db import conn
 from core.ui_theme import page_header, section_title, metric_card
 from core.config import APP_NAME, APP_VERSION
 
 
-# ----------------------------------------------------------
-#  Hilfsfunktionen
-# ----------------------------------------------------------
-
+# ----------------------------
+# Hilfsfunktionen
+# ----------------------------
 def _table_exists(c, name: str) -> bool:
-    row = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
-    return row is not None
+    return c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
 
 def _safe_load_daily() -> pd.DataFrame:
-    """Lädt Tabelle 'daily' sicher aus der DB, auch wenn sie leer oder fehlerhaft ist."""
+    """Lädt Tabelle 'daily' sicher, auch bei Fehlern oder leerer DB."""
     with conn() as cn:
         c = cn.cursor()
         if not _table_exists(c, "daily"):
@@ -35,17 +33,17 @@ def _safe_load_daily() -> pd.DataFrame:
 
 
 def _seed_example_rows():
-    """Erstellt Beispiel-Daten, falls noch keine Tagesdaten vorhanden sind."""
+    """Erstellt Beispiel-Datensätze für 'daily'."""
     today = dt.date.today()
     rows = []
     for i in range(10):
         d = today - dt.timedelta(days=9 - i)
         rows.append((
             d.strftime("%Y-%m-%d"),
-            1000 + i * 180,  # umsatz_total
-            120+i*5, 130+i*5, 140+i*5, 150+i*5, 160+i*5, 170+i*5, 180+i*5,  # bar1..bar7
-            200, 300, 150, 220, 100, 130,  # kassen cash/card
-            90  # garderobe_total
+            1000 + i * 180,
+            120+i*5, 130+i*5, 140+i*5, 150+i*5, 160+i*5, 170+i*5, 180+i*5,
+            200, 300, 150, 220, 100, 130,
+            90
         ))
 
     with conn() as cn:
@@ -56,23 +54,19 @@ def _seed_example_rows():
                     datum, umsatz_total, bar1,bar2,bar3,bar4,bar5,bar6,bar7,
                     kasse1_cash,kasse1_card,kasse2_cash,kasse2_card,kasse3_cash,kasse3_card,
                     garderobe_total
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, r)
         cn.commit()
 
 
-# ----------------------------------------------------------
-#  Dashboard Rendering
-# ----------------------------------------------------------
-
+# ----------------------------
+# Dashboard Rendering
+# ----------------------------
 def render_dashboard():
     page_header("📊 Dashboard", "Dein Überblick über Umsatz, Bars und Kassen")
 
     df = _safe_load_daily()
 
-    # ----------------------------------------------------------
-    #  Kein Datenbestand -> Demo-Erstellung anbieten
-    # ----------------------------------------------------------
     if df.empty:
         st.warning("Noch keine Tagesdaten vorhanden. Lege Beispieldaten an oder erfasse Daten in der Abrechnung.")
         if st.button("🔧 Demo-Daten anlegen", use_container_width=True):
@@ -80,44 +74,32 @@ def render_dashboard():
             st.success("Beispieldaten gespeichert. Öffne das Dashboard erneut.")
         st.stop()
 
-    # ----------------------------------------------------------
-    #  Datenbasis aufbereiten
-    # ----------------------------------------------------------
+    # Zeitraum anzeigen
+    zeitraum = "Unbekannt"
     if "datum" in df.columns:
         df = df.sort_values("datum")
         zeitraum = f"{df['datum'].min().date()} → {df['datum'].max().date()}"
-    else:
-        zeitraum = "Unbekannt"
-
     st.caption(f"Zeitraum: **{zeitraum}**")
     st.divider()
 
-    # ----------------------------------------------------------
-    #  KPIs (Umsatz / Bars / Garderobe)
-    # ----------------------------------------------------------
+    # KPIs anzeigen
     total = float(df["umsatz_total"].sum()) if "umsatz_total" in df.columns else 0.0
     avg_day = total / len(df) if len(df) > 0 else 0.0
     last_day = float(df["umsatz_total"].iloc[-1]) if "umsatz_total" in df.columns else 0.0
 
     c1, c2, c3 = st.columns(3)
-    metric_card("Gesamtumsatz", f"{total:,.2f} €", "Summe aller Tage")
-    metric_card("⌀ Tagesumsatz", f"{avg_day:,.2f} €", "Durchschnitt pro Öffnungstag")
-    metric_card("Letzter Tag", f"{last_day:,.2f} €", f"{df['datum'].iloc[-1].strftime('%d.%m.%Y')}")
+    with c1: metric_card("Gesamtumsatz", f"{total:,.2f} €", "Summe aller Tage")
+    with c2: metric_card("⌀ Tagesumsatz", f"{avg_day:,.2f} €", "Durchschnitt pro Öffnungstag")
+    with c3: metric_card("Letzter Tag", f"{last_day:,.2f} €", f"{df['datum'].iloc[-1].strftime('%d.%m.%Y')}")
 
     st.divider()
 
-    # ----------------------------------------------------------
-    #  Zeitreihe Umsatz pro Tag
-    # ----------------------------------------------------------
+    # Umsatz-Zeitreihe
     if "datum" in df.columns and "umsatz_total" in df.columns:
         section_title("Umsatzentwicklung (pro Tag)")
-        fig_line = px.line(
-            df, x="datum", y="umsatz_total",
-            markers=True,
-            line_shape="spline",
-            color_discrete_sequence=["#00C853"]
-        )
-        fig_line.update_layout(
+        fig = px.line(df, x="datum", y="umsatz_total", markers=True, line_shape="spline",
+                      color_discrete_sequence=["#00C853"])
+        fig.update_layout(
             showlegend=False,
             xaxis_title="Datum",
             yaxis_title="Tagesumsatz (€)",
@@ -125,11 +107,9 @@ def render_dashboard():
             height=350,
             margin=dict(l=30, r=30, t=40, b=30)
         )
-        st.plotly_chart(fig_line, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ----------------------------------------------------------
-    #  Aufteilung Bars (Summe)
-    # ----------------------------------------------------------
+    # Bar-Summen
     bar_cols = [c for c in df.columns if c.startswith("bar")]
     if bar_cols:
         section_title("Aufteilung nach Bars (Gesamtumsatz)")
@@ -150,9 +130,7 @@ def render_dashboard():
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
-    # ----------------------------------------------------------
-    #  Aufteilung Kassen (Summe)
-    # ----------------------------------------------------------
+    # Kassen-Summen
     k_cols = [c for c in df.columns if c.startswith("kasse")]
     if k_cols:
         section_title("Kassenumsätze (Cash / Karte)")
@@ -173,9 +151,7 @@ def render_dashboard():
         )
         st.plotly_chart(fig_k, use_container_width=True)
 
-    # ----------------------------------------------------------
-    #  Letzte 10 Datensätze (Tabelle)
-    # ----------------------------------------------------------
+    # Letzte 10 Datensätze
     section_title("Letzte Einträge")
     st.dataframe(df.tail(10), use_container_width=True)
 
