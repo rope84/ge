@@ -1,6 +1,6 @@
-# profile.py
 import re
 import streamlit as st
+
 from core.ui_theme import page_header, section_title
 from core.auth import change_password
 from core.db import conn
@@ -14,13 +14,12 @@ def _fetch_user(username: str):
     """Lädt Benutzerdaten aus der DB."""
     with conn() as cn:
         c = cn.cursor()
-        row = c.execute("""
+        return c.execute("""
             SELECT id, username, first_name, last_name, email, role
             FROM users
             WHERE username = ?
             LIMIT 1
         """, (username.strip(),)).fetchone()
-    return row
 
 
 def _update_user_profile(username: str, first_name: str, last_name: str, email: str):
@@ -36,12 +35,12 @@ def _update_user_profile(username: str, first_name: str, last_name: str, email: 
 
 
 # -------------------------------
-# Passwort-Policy (6–8, Zahl + Sonderzeichen)
+# Passwort-Policy
 # -------------------------------
 _PW_HINT = "Mind. 6–8 Zeichen, mindestens 1 Zahl und 1 Sonderzeichen."
 
+
 def _valid_password(pw: str) -> bool:
-    """Einfache Policy-Prüfung."""
     if not 6 <= len(pw) <= 8:
         return False
     if not re.search(r"\d", pw):
@@ -63,8 +62,6 @@ def render_profile(username: str):
         return
 
     uid, uname, first_name, last_name, email, role = row
-
-    # Tabs: Profil | Passwort ändern
     tabs = st.tabs(["🪪 Profil", "🔐 Passwort ändern"])
 
     # ------------------ TAB: PROFIL ------------------
@@ -72,9 +69,9 @@ def render_profile(username: str):
         section_title("Persönliche Daten")
 
         col1, col2 = st.columns(2)
-        new_first = col1.text_input("Vorname", value=first_name or "", placeholder="z. B. Roman")
-        new_last = col2.text_input("Nachname", value=last_name or "", placeholder="z. B. Petek")
-        new_email = st.text_input("E-Mail-Adresse", value=email or "", placeholder="z. B. roman@example.com")
+        new_first = col1.text_input("Vorname", value=first_name or "", placeholder="z. B. Roman")
+        new_last = col2.text_input("Nachname", value=last_name or "", placeholder="z. B. Petek")
+        new_email = st.text_input("E-Mail-Adresse", value=email or "", placeholder="z. B. roman@example.com")
 
         if st.button("💾 Änderungen speichern", use_container_width=True, key="btn_profile_save"):
             _update_user_profile(username, new_first, new_last, new_email)
@@ -93,7 +90,7 @@ def render_profile(username: str):
             st.markdown(
                 "- **Länge:** 6–8 Zeichen\n"
                 "- **Mindestens eine Zahl** (0–9)\n"
-                "- **Mindestens ein Sonderzeichen** (z. B. !, ?, %, _)\n"
+                "- **Mindestens ein Sonderzeichen** (z. B. !, ?, %, _)"
             )
 
         if st.button("Passwort aktualisieren", use_container_width=True, key="btn_pw_change"):
