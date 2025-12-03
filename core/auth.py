@@ -29,11 +29,10 @@ def verify_pw(pw: str, ph: str) -> bool:
 # Schema-Sicherung
 # -----------------------------
 def _ensure_user_schema() -> None:
-    """Stellt sicher, dass Tabelle users + alle benötigten Spalten existieren."""
+    """Stellt sicher, dass Tabelle 'users' + alle benötigten Spalten existieren."""
     with conn() as cn:
         c = cn.cursor()
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username   TEXT NOT NULL UNIQUE,
@@ -46,8 +45,7 @@ def _ensure_user_schema() -> None:
                 created_at TEXT,
                 units      TEXT DEFAULT ''
             )
-            """
-        )
+        """)
 
         cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
 
@@ -61,11 +59,12 @@ def _ensure_user_schema() -> None:
         _add("created_at", "created_at TEXT")
         _add("units", "units      TEXT DEFAULT ''")
 
-        c.execute("UPDATE users SET passhash   = COALESCE(passhash,'')")
-        c.execute("UPDATE users SET functions  = COALESCE(functions,'')")
-        c.execute("UPDATE users SET status     = COALESCE(status,'active')")
+        # Standardwerte setzen, wo leer
+        c.execute("UPDATE users SET passhash   = COALESCE(passhash, '')")
+        c.execute("UPDATE users SET functions  = COALESCE(functions, '')")
+        c.execute("UPDATE users SET status     = COALESCE(status, 'active')")
         c.execute("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))")
-        c.execute("UPDATE users SET units      = COALESCE(units,'')")
+        c.execute("UPDATE users SET units      = COALESCE(units, '')")
 
         cn.commit()
 
