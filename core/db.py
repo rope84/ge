@@ -72,7 +72,9 @@ def migrate():
         _add_column_if_missing(c, "users", "scope", "TEXT DEFAULT ''")
         _add_column_if_missing(c, "users", "email", "TEXT DEFAULT ''")
         _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
+        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT '')")
+        _add_column_if_missing(c, "users", "status", "TEXT NOT NULL DEFAULT 'active'")
+
 
         # EMPLOYEES Tabelle
         c.execute("""
@@ -147,4 +149,4 @@ def setup_db():
     except Exception as e:
         print(f"[WARNUNG] Backup konnte nicht erstellt werden: {e}")
 
-    migrate() 
+    migrate()
