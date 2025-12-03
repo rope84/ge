@@ -11,7 +11,26 @@ from core.db import setup_db, conn
 from core.ui_theme import use_theme
 from login import render_login_form
 from core.config import APP_NAME, APP_VERSION
+from modules import setup  # NEU importieren
 
+def main():
+    st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
+    use_theme()
+
+    # Prüfe, ob Setup notwendig ist
+    with conn() as c:
+        c.row_factory = lambda cursor, row: row[0]
+        user_count = c.execute("SELECT COUNT(*) FROM users").fetchone()
+
+    if user_count == 0 and not st.session_state.get("setup_done"):
+        setup.render_setup()
+        return
+
+    if not st.session_state.auth:
+        login_screen()
+    else:
+        sidebar()
+        route()
 
 # ---------------- Initial Setup ----------------
 setup_db()  # DB-Datei + Basis vorhanden
