@@ -13,13 +13,16 @@ def render_setup():
         admin_pass = st.text_input("Passwort", type="password", key="setup_admin_pass")
         if st.button("✅ Admin anlegen"):
             if admin_user and admin_pass:
-                with conn() as c:
-                    c.execute("""
-                        INSERT INTO users (username, passhash, role, status) 
-                        VALUES (?, ?, 'admin', 'active')
-                    """, (admin_user, _hash_password(admin_pass)))
-                st.session_state["setup_step"] = 2
-                st.rerun()
+                try:
+                    with conn() as c:
+                        c.execute("""
+                            INSERT OR IGNORE INTO users (username, passhash, role, status)
+                            VALUES (?, ?, 'admin', 'active')
+                        """, (admin_user, _hash_password(admin_pass)))
+                    st.session_state["setup_step"] = 2
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Erstellen des Admins: {e}")
             else:
                 st.error("Bitte Benutzername und Passwort eingeben.")
 
@@ -30,16 +33,15 @@ def render_setup():
 
         if st.button("✅ Setup abschließen"):
             if name:
-                with conn() as c:
-                    c.execute("""
-                        INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?) 
-                    """, ("org_name", name))
-                    c.execute("""
-                        INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?) 
-                    """, ("org_address", adresse or ""))
-                st.success("Setup abgeschlossen 🎉")
-                st.session_state["auth"] = False  # Damit regulärer Login folgt
-                st.session_state["setup_done"] = True
-                st.rerun()
+                try:
+                    with conn() as c:
+                        c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_name", name))
+                        c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("org_address", adresse or ""))
+                        c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("setup_done", "yes"))
+                    st.success("Setup abgeschlossen 🎉")
+                    st.balloons()
+                    st.switch_page("app.py")  # Optionaler Refresh
+                except Exception as e:
+                    st.error(f"Fehler beim Abschließen des Setups: {e}")
             else:
                 st.error("Name des Betriebs ist erforderlich.")
