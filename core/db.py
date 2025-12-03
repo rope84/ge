@@ -1,4 +1,5 @@
 # core/db.py
+
 import sqlite3
 import shutil
 import time
@@ -6,6 +7,7 @@ from pathlib import Path
 
 DB_PATH = "gastro.db"
 BACKUP_DIR = Path("DB_BCK")
+
 
 # ---------- Low-level helpers ----------
 def conn():
@@ -25,17 +27,15 @@ def _add_column_if_missing(c, table: str, col: str, ddl: str):
 
 # ---------- Migrations ----------
 def _ensure_schema_migrations(c):
-    c.execute(
-        """
+    c.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations(
             id INTEGER PRIMARY KEY CHECK (id=1),
             version INTEGER NOT NULL
         )
-        """
-    )
+    """)
     row = c.execute("SELECT version FROM schema_migrations WHERE id=1").fetchone()
     if row is None:
-        c.execute("INSERT INTO schema_migrations(id,version) VALUES(1,0)")
+        c.execute("INSERT INTO schema_migrations(id, version) VALUES (1, 0)")
 
 
 def _get_version(c) -> int:
@@ -48,20 +48,14 @@ def _set_version(c, v: int):
 
 
 def migrate():
-    """
-    Führt idempotente Migrationen durch:
-    - legt Tabellen an, falls sie fehlen
-    - ergänzt fehlende Spalten per ALTER TABLE
-    - speichert Schema-Version
-    """
+    """Führt idempotente Migrationen durch."""
     with conn() as cn:
         c = cn.cursor()
         _ensure_schema_migrations(c)
         ver = _get_version(c)
 
-        # --- USERS ----------------------------------------------------------
-        c.execute(
-            """
+        # USERS Tabelle
+        c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username    TEXT UNIQUE NOT NULL,
@@ -72,8 +66,7 @@ def migrate():
                 first_name  TEXT DEFAULT '',
                 last_name   TEXT DEFAULT ''
             );
-            """
-        )
+        """)
         _add_column_if_missing(c, "users", "passhash", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(c, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         _add_column_if_missing(c, "users", "scope", "TEXT DEFAULT ''")
@@ -81,9 +74,8 @@ def migrate():
         _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
         _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
 
-        # --- EMPLOYEES ------------------------------------------------------
-        c.execute(
-            """
+        # EMPLOYEES Tabelle
+        c.execute("""
             CREATE TABLE IF NOT EXISTS employees (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name        TEXT NOT NULL,
@@ -92,18 +84,13 @@ def migrate():
                 is_barlead  INTEGER NOT NULL DEFAULT 0,
                 bar_no      INTEGER
             );
-            """
-        )
+        """)
 
-        # ⚠️ KEINE Inventur-Tabellen hier – die neue Inventur nutzt
-        # inv_months / inv_items in modules.inventur_db.ensure_inventur_schema()
-
-        # --- DAILY (Tagesabrechnung / Dashboard) ----------------------------
-        c.execute(
-            """
+        # DAILY Tabelle
+        c.execute("""
             CREATE TABLE IF NOT EXISTS daily(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                datum TEXT NOT NULL UNIQUE,         -- YYYY-MM-DD
+                datum TEXT NOT NULL UNIQUE,
                 umsatz_total REAL NOT NULL DEFAULT 0,
                 bar1 REAL NOT NULL DEFAULT 0,
                 bar2 REAL NOT NULL DEFAULT 0,
@@ -120,10 +107,9 @@ def migrate():
                 kasse3_card REAL NOT NULL DEFAULT 0,
                 garderobe_total REAL NOT NULL DEFAULT 0
             );
-            """
-        )
+        """)
 
-        # --- Schema-Version -------------------------------------------------
+        # Schema-Version setzen
         target_ver = 2
         if ver < target_ver:
             _set_version(c, target_ver)
@@ -131,13 +117,13 @@ def migrate():
         cn.commit()
 
 
+# ---------- Setup ----------
 def setup_db():
     """
     Initialisiert die Datenbank:
-    - erstellt Datei, falls nicht vorhanden
-    - legt Backup-Verzeichnis an
-    - sichert ein Backup vor Migration
-    - führt Migration aus
+    - legt Datei und Backup-Verzeichnis an
+    - sichert DB vor Migration
+    - führt Migration durch
     """
     if not Path(DB_PATH).exists():
         Path(DB_PATH).touch()
