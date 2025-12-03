@@ -1,4 +1,3 @@
-
 import re
 import streamlit as st
 
@@ -49,6 +48,11 @@ def _valid_password(pw: str) -> bool:
     return True
 
 
+def _valid_username(username: str) -> bool:
+    """Nur Buchstaben + Zahlen, mind. 3 Zeichen."""
+    return bool(re.fullmatch(r"[A-Za-z0-9]{3,}", username))
+
+
 # -------------------------------
 # Render
 # -------------------------------
@@ -60,10 +64,10 @@ def render_profile(username: str):
         st.error("Benutzer konnte nicht geladen werden.")
         return
 
-    uid, uname, first_name, last_name, email, role = row
+    uid, uname, first_name, last_name, email, _ = row
     scope = st.session_state.get("scope", "-")
 
-    # Rechte grafisch anzeigen
+    # Rechte anzeigen
     with st.container():
         st.markdown(f"""
         <div style="
@@ -74,11 +78,10 @@ def render_profile(username: str):
             margin-bottom: 20px;
         ">
             <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">
-                🛡️ Aktuelle Zugriffsrechte
+                🔐 Aktive Rechte
             </div>
             <div style="font-size: 14px;">
-                <strong>Rolle:</strong> <code>{role}</code><br>
-                <strong>Rechte:</strong> <code>{scope}</code>
+                <code>{scope or '–'}</code>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -89,23 +92,21 @@ def render_profile(username: str):
     with tabs[0]:
         section_title("Persönliche Daten")
 
-        if st.checkbox("Ich möchte meinen Benutzernamen ändern"):
-            new_username = st.text_input("Benutzername", value=uname)
-        else:
-            new_username = uname
-            st.text_input("Benutzername", value=uname, disabled=True)
-
+        new_username = st.text_input("Benutzername", value=uname)
         col1, col2 = st.columns(2)
-        new_first = col1.text_input("Vorname", value=first_name or "", placeholder="z. B. Roman")
-        new_last = col2.text_input("Nachname", value=last_name or "", placeholder="z. B. Petek")
-        new_email = st.text_input("E-Mail-Adresse", value=email or "", placeholder="z. B. roman@example.com")
+        new_first = col1.text_input("Vorname", value=first_name or "")
+        new_last = col2.text_input("Nachname", value=last_name or "")
+        new_email = st.text_input("E-Mail-Adresse", value=email or "")
 
         if st.button("💾 Änderungen speichern", use_container_width=True, key="btn_profile_save"):
-            _update_user_profile(uname, new_username, new_first, new_last, new_email)
-            st.success("Profil erfolgreich aktualisiert!")
-            if new_username != uname:
-                st.warning("🔁 Der Benutzername wurde geändert. Bitte neu anmelden.")
-                st.session_state.clear()
+            if not _valid_username(new_username):
+                st.error("❌ Benutzername darf nur Buchstaben und Zahlen enthalten (mind. 3 Zeichen).")
+            else:
+                _update_user_profile(uname, new_username, new_first, new_last, new_email)
+                st.success("Profil erfolgreich aktualisiert!")
+                if new_username != uname:
+                    st.warning("🔁 Benutzername wurde geändert. Bitte neu anmelden.")
+                    st.session_state.clear()
 
     # ------------------ TAB: PASSWORT ------------------
     with tabs[1]:
