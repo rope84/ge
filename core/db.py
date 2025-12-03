@@ -147,4 +147,4 @@ def setup_db():
     except Exception as e:
         print(f"[WARNUNG] Backup konnte nicht erstellt werden: {e}")
 
-    migrate()
+    migrate() 
