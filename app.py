@@ -152,30 +152,33 @@ def sidebar():
             logout()
 
         st.markdown("""
-        <style>
-        div[data-testid="stSidebar"] > div:first-child {{
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-        }}
-        .sidebar-footer {{
-            margin-top: auto;
-            font-size: 12px;
-            color: gray;
-        }}
-        </style>
-        <div class="sidebar-footer">
-            <hr>
-            👤 {username}<br>
-            Rolle: <b>{role}</b><br>
-            <i>{app_name} {app_version}</i>
-        </div>
-        """.format(
-            username=st.session_state.get('username', 'Gast'),
-            role=st.session_state.get('role', 'user'),
-            app_name=APP_NAME,
-            app_version=APP_VERSION
-        ), unsafe_allow_html=True)
+    <style>
+    /* Vollständige Kontrolle über Sidebar */
+    div[data-testid="stSidebar"] > div:first-child {
+        position: relative;
+        height: 100%;
+        padding-bottom: 80px; /* Platz für Footer */
+    }
+    .sidebar-footer {
+        position: absolute;
+        bottom: 12px;
+        left: 16px;
+        font-size: 12px;
+        color: gray;
+    }
+    </style>
+    <div class="sidebar-footer">
+        <hr style='margin-bottom:6px;'>
+        👤 {username}<br>
+        Rolle: <b>{role}</b><br>
+        <i>{app_name} {app_version}</i>
+    </div>
+""".format(
+    username=st.session_state.get('username', 'Gast'),
+    role=st.session_state.get('role', 'user'),
+    app_name=APP_NAME,
+    app_version=APP_VERSION
+), unsafe_allow_html=True)
 
 
 # ---------------- Routing ----------------
