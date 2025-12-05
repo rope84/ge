@@ -170,19 +170,36 @@ def sidebar():
             logout()
 
         # 👇 Footer pushed to bottom
-        st.markdown("""
-            <div class="sidebar-footer">
-                <hr style='margin-bottom:6px;'>
-                👤 {username}<br>
-                Rolle: <b>{role}</b><br>
-                <i>{app_name} {app_version}</i>
-            </div>
-        """.format(
-            username=st.session_state.get('username', 'Gast'),
-            role=st.session_state.get('role', 'user'),
-            app_name=APP_NAME,
-            app_version=APP_VERSION
-        ), unsafe_allow_html=True)
+st.markdown("""
+    <style>
+    /* Sidebar flexen */
+    div[data-testid="stSidebar"] > div:first-child {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        height: 100%;
+    }
+    .sidebar-footer {
+        font-size: 12px;
+        color: gray;
+        padding: 8px 16px 16px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Footer anzeigen — wird durch CSS an unteren Rand gepusht
+st.markdown("""
+    <div class="sidebar-footer">
+        👤 {username}<br>
+        Rolle: <b>{role}</b><br>
+        <i>{app_name} {app_version}</i>
+    </div>
+""".format(
+    username=st.session_state.get('username', 'Gast'),
+    role=st.session_state.get('role', 'user'),
+    app_name=APP_NAME,
+    app_version=APP_VERSION
+), unsafe_allow_html=True)
 
 
 
