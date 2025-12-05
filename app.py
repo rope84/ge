@@ -154,19 +154,17 @@ def sidebar():
 st.markdown("""
     <style>
     div[data-testid="stSidebar"] > div:first-child {{
-        position: relative;
+        display: flex;
+        flex-direction: column;
         height: 100%;
-        padding-bottom: 80px;
     }}
     .sidebar-footer {{
-        position: absolute;
-        bottom: 12px;
-        left: 16px;
+        margin-top: auto;
+        padding: 12px 16px 24px;
         font-size: 12px;
         color: gray;
     }}
     </style>
-
     <div class="sidebar-footer">
         <hr style='margin-bottom:6px;'>
         👤 {username}<br>
