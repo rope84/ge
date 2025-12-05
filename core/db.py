@@ -54,7 +54,7 @@ def migrate():
         _ensure_schema_migrations(c)
         ver = _get_version(c)
 
-        # USERS Tabelle (alle Spalten wie benötigt)
+        # USERS Tabelle
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,13 +120,20 @@ def migrate():
             );
         """)
 
+        # META Tabelle (NEU!)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+
         # Schema-Version setzen
         target_ver = 2
         if ver < target_ver:
             _set_version(c, target_ver)
 
         cn.commit()
-
 
 # ---------- Setup ----------
 def setup_db():
