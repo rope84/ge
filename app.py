@@ -151,22 +151,22 @@ def sidebar():
         if st.button("Logout", use_container_width=True):
             logout()
 
-        st.markdown("""
+st.markdown("""
     <style>
-    /* Vollständige Kontrolle über Sidebar */
-    div[data-testid="stSidebar"] > div:first-child {
+    div[data-testid="stSidebar"] > div:first-child {{
         position: relative;
         height: 100%;
-        padding-bottom: 80px; /* Platz für Footer */
-    }
-    .sidebar-footer {
+        padding-bottom: 80px;
+    }}
+    .sidebar-footer {{
         position: absolute;
         bottom: 12px;
         left: 16px;
         font-size: 12px;
         color: gray;
-    }
+    }}
     </style>
+
     <div class="sidebar-footer">
         <hr style='margin-bottom:6px;'>
         👤 {username}<br>
