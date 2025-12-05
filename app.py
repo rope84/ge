@@ -112,7 +112,25 @@ def sidebar():
     if not st.session_state.get("auth"):
         return
 
+    # CSS FIRST: Apply flexbox to sidebar layout to enable footer at bottom
+    st.markdown("""
+        <style>
+        div[data-testid="stSidebar"] > div:first-child {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 12px 16px 24px;
+            font-size: 12px;
+            color: gray;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     with st.sidebar:
+        # Top section
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
@@ -151,32 +169,21 @@ def sidebar():
         if st.button("Logout", use_container_width=True):
             logout()
 
-st.markdown("""
-    <style>
-    div[data-testid="stSidebar"] > div:first-child {{
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-    }}
-    .sidebar-footer {{
-        margin-top: auto;
-        padding: 12px 16px 24px;
-        font-size: 12px;
-        color: gray;
-    }}
-    </style>
-    <div class="sidebar-footer">
-        <hr style='margin-bottom:6px;'>
-        👤 {username}<br>
-        Rolle: <b>{role}</b><br>
-        <i>{app_name} {app_version}</i>
-    </div>
-""".format(
-    username=st.session_state.get('username', 'Gast'),
-    role=st.session_state.get('role', 'user'),
-    app_name=APP_NAME,
-    app_version=APP_VERSION
-), unsafe_allow_html=True)
+        # 👇 Footer pushed to bottom
+        st.markdown("""
+            <div class="sidebar-footer">
+                <hr style='margin-bottom:6px;'>
+                👤 {username}<br>
+                Rolle: <b>{role}</b><br>
+                <i>{app_name} {app_version}</i>
+            </div>
+        """.format(
+            username=st.session_state.get('username', 'Gast'),
+            role=st.session_state.get('role', 'user'),
+            app_name=APP_NAME,
+            app_version=APP_VERSION
+        ), unsafe_allow_html=True)
+
 
 
 # ---------------- Routing ----------------
