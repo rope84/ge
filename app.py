@@ -113,7 +113,6 @@ def sidebar():
         return
 
     with st.sidebar:
-        # Query Handling
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
@@ -126,11 +125,9 @@ def sidebar():
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
 
-        # Logo + Version
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
-        # Navigation
         funcs = (st.session_state.get("scope") or "").lower()
         role = (st.session_state.get("role") or "").lower()
 
@@ -154,19 +151,18 @@ def sidebar():
         if st.button("Logout", use_container_width=True):
             logout()
 
-        # Footer ganz unten mit CSS
         st.markdown("""
         <style>
-        div[data-testid="stSidebar"] > div:first-child {
+        div[data-testid="stSidebar"] > div:first-child {{
             display: flex;
             flex-direction: column;
             height: 100%;
-        }
-        .sidebar-footer {
+        }}
+        .sidebar-footer {{
             margin-top: auto;
             font-size: 12px;
             color: gray;
-        }
+        }}
         </style>
         <div class="sidebar-footer">
             <hr>
