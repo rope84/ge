@@ -113,6 +113,7 @@ def sidebar():
         return
 
     with st.sidebar:
+        # Query Handling
         query_params = st.query_params
         if "nav_choice" in query_params:
             st.session_state["nav_choice"] = query_params["nav_choice"]
@@ -125,9 +126,11 @@ def sidebar():
             st.session_state["nav_choice"] = "Profil"
             del st.session_state["go_profile"]
 
+        # Logo + Version
         st.markdown(f"### {APP_NAME}")
         st.caption(APP_VERSION)
 
+        # Navigation
         funcs = (st.session_state.get("scope") or "").lower()
         role = (st.session_state.get("role") or "").lower()
 
@@ -151,21 +154,32 @@ def sidebar():
         if st.button("Logout", use_container_width=True):
             logout()
 
-        # --- Platzhalter für Footer pushen ---
-        st.markdown("<div style='flex:1'></div>", unsafe_allow_html=True)
-        st.markdown("---", unsafe_allow_html=True)
-
-        # 👇 Footer GANZ UNTEN
-        st.markdown(
-            f"""
-            <div style='font-size: 12px; color: gray; margin-top: 48px; text-align: left'>
-                👤 {st.session_state.get('username', 'Gast')}<br>
-                Rolle: <b>{st.session_state.get('role', 'user')}</b><br>
-                <i>{APP_NAME} {APP_VERSION}</i>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        # Footer ganz unten mit CSS
+        st.markdown("""
+        <style>
+        div[data-testid="stSidebar"] > div:first-child {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .sidebar-footer {
+            margin-top: auto;
+            font-size: 12px;
+            color: gray;
+        }
+        </style>
+        <div class="sidebar-footer">
+            <hr>
+            👤 {username}<br>
+            Rolle: <b>{role}</b><br>
+            <i>{app_name} {app_version}</i>
+        </div>
+        """.format(
+            username=st.session_state.get('username', 'Gast'),
+            role=st.session_state.get('role', 'user'),
+            app_name=APP_NAME,
+            app_version=APP_VERSION
+        ), unsafe_allow_html=True)
 
 
 # ---------------- Routing ----------------
