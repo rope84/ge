@@ -3,8 +3,6 @@
 import traceback
 import datetime
 import importlib
-import inspect
-from pathlib import Path
 import streamlit as st
 
 from core.db import setup_db, conn
@@ -32,7 +30,6 @@ def is_setup_done() -> bool:
     except Exception:
         return False
 
-
 # ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
@@ -53,7 +50,6 @@ def import_modules():
 
     return modules, errors, loaded_meta
 
-
 modules, import_errors, import_meta = import_modules()
 
 # ---------------- Session Init ----------------
@@ -65,7 +61,6 @@ def init_session():
     s.setdefault("scope", "")
     s.setdefault("nav_choice", "Start")
 
-
 init_session()
 
 # ---------------- Auth ----------------
@@ -74,10 +69,8 @@ def logout():
     init_session()
     st.rerun()
 
-
 def _lazy_auth():
     return importlib.import_module("core.auth")
-
 
 def login_screen():
     from login import render_login_form
@@ -106,102 +99,80 @@ def login_screen():
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Benutzername, Passwort und Status.")
 
-
 # ---------------- Sidebar ----------------
 def sidebar():
     if not st.session_state.get("auth"):
         return
 
-    # CSS FIRST: Apply flexbox to sidebar layout to enable footer at bottom
+    # CSS Fixes
     st.markdown("""
         <style>
         div[data-testid="stSidebar"] > div:first-child {
             display: flex;
             flex-direction: column;
+            justify-content: space-between;
             height: 100%;
         }
         .sidebar-footer {
-            margin-top: auto;
-            padding: 12px 16px 24px;
             font-size: 12px;
             color: gray;
+            padding: 8px 16px 16px;
         }
         </style>
     """, unsafe_allow_html=True)
 
     with st.sidebar:
-        # Top section
-        query_params = st.query_params
-        if "nav_choice" in query_params:
-            st.session_state["nav_choice"] = query_params["nav_choice"]
-            st.query_params.clear()
+        with st.container():
+            query_params = st.query_params
+            if "nav_choice" in query_params:
+                st.session_state["nav_choice"] = query_params["nav_choice"]
+                st.query_params.clear()
 
-        if st.session_state.get("nav_to"):
-            st.session_state["nav_choice"] = st.session_state.pop("nav_to")
+            if st.session_state.get("nav_to"):
+                st.session_state["nav_choice"] = st.session_state.pop("nav_to")
 
-        if st.session_state.get("go_profile"):
-            st.session_state["nav_choice"] = "Profil"
-            del st.session_state["go_profile"]
+            if st.session_state.get("go_profile"):
+                st.session_state["nav_choice"] = "Profil"
+                del st.session_state["go_profile"]
 
-        st.markdown(f"### {APP_NAME}")
-        st.caption(APP_VERSION)
+            st.markdown(f"### {APP_NAME}")
+            st.caption(APP_VERSION)
 
-        funcs = (st.session_state.get("scope") or "").lower()
-        role = (st.session_state.get("role") or "").lower()
+            funcs = (st.session_state.get("scope") or "").lower()
+            role = (st.session_state.get("role") or "").lower()
 
-        display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+            display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
 
-        if ("inventur" in funcs) or (role == "admin"):
-            display_pages.insert(3, "Inventur")
+            if ("inventur" in funcs) or (role == "admin"):
+                display_pages.insert(3, "Inventur")
 
-        if role == "admin":
-            display_pages.append("Admin-Cockpit")
+            if role == "admin":
+                display_pages.append("Admin-Cockpit")
 
-        st.radio(
-            "Navigation",
-            display_pages,
-            index=display_pages.index(st.session_state.get("nav_choice", "Start")),
-            label_visibility="collapsed",
-            key="nav_choice",
-        )
+            st.radio(
+                "Navigation",
+                display_pages,
+                index=display_pages.index(st.session_state.get("nav_choice", "Start")),
+                label_visibility="collapsed",
+                key="nav_choice",
+            )
 
-        st.divider()
-        if st.button("Logout", use_container_width=True):
-            logout()
+            st.divider()
+            if st.button("Logout", use_container_width=True):
+                logout()
 
-        # 👇 Footer pushed to bottom
-st.markdown("""
-    <style>
-    /* Sidebar flexen */
-    div[data-testid="stSidebar"] > div:first-child {
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        height: 100%;
-    }
-    .sidebar-footer {
-        font-size: 12px;
-        color: gray;
-        padding: 8px 16px 16px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Footer anzeigen — wird durch CSS an unteren Rand gepusht
-st.markdown("""
-    <div class="sidebar-footer">
-        👤 {username}<br>
-        Rolle: <b>{role}</b><br>
-        <i>{app_name} {app_version}</i>
-    </div>
-""".format(
-    username=st.session_state.get('username', 'Gast'),
-    role=st.session_state.get('role', 'user'),
-    app_name=APP_NAME,
-    app_version=APP_VERSION
-), unsafe_allow_html=True)
-
-
+        st.markdown("""
+            <div class="sidebar-footer">
+                👤 {username}<br>
+                Rolle: <b>{role}</b><br>
+                <i>{app_name} {app_version}</i>
+            </div>
+        """.format(
+            username=st.session_state.get('username', 'Gast'),
+            role=st.session_state.get('role', 'user'),
+            app_name=APP_NAME,
+            app_version=APP_VERSION
+        ), unsafe_allow_html=True)
 
 # ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
@@ -212,7 +183,6 @@ DISPLAY_TO_MODULE = {
     "profil": "profile",
     "admin-cockpit": "admin",
 }
-
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -251,10 +221,13 @@ def route():
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
 
-
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
+
+    # Globale Top-Padding-Reduktion
+    st.markdown('<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
+
     use_theme()
 
     if not is_setup_done():
@@ -264,7 +237,6 @@ def main():
     else:
         sidebar()
         route()
-
 
 if __name__ == "__main__":
     main()
