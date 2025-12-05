@@ -151,9 +151,14 @@ def sidebar():
         if st.button("Logout", use_container_width=True):
             logout()
 
+        # --- Platzhalter für Footer pushen ---
+        st.markdown("<div style='flex:1'></div>", unsafe_allow_html=True)
+        st.markdown("---", unsafe_allow_html=True)
+
+        # 👇 Footer GANZ UNTEN
         st.markdown(
             f"""
-            <div style='font-size: 12px; color: gray; margin-top: 24px'>
+            <div style='font-size: 12px; color: gray; margin-top: 48px; text-align: left'>
                 👤 {st.session_state.get('username', 'Gast')}<br>
                 Rolle: <b>{st.session_state.get('role', 'user')}</b><br>
                 <i>{APP_NAME} {APP_VERSION}</i>
