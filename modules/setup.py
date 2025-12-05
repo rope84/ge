@@ -1,3 +1,4 @@
+
 # modules/setup.py
 import streamlit as st
 from core.db import conn
@@ -5,7 +6,7 @@ from core.auth import _hash_password
 import time
 
 def render_setup():
-    st.title("🔧 Erst-Setup: Gastro Essentials")
+    st.title("🔧 Setup")
 
     step = st.session_state.get("setup_step", 1)
 
@@ -25,7 +26,6 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    # Existenz prüfen
                     exists = c.execute(
                         "SELECT 1 FROM users WHERE username = ?",
                         (admin_user.strip(),)
@@ -57,7 +57,10 @@ def render_setup():
         st.subheader("2️⃣ Grundparameter des Betriebs")
 
         orgname = st.text_input("🧾 Name des Betriebs", key="setup_orgname")
-        orgaddr = st.text_area("📍 Adresse", key="setup_orgaddr")
+        phone = st.text_input("📞 Telefonnummer", key="setup_phone")
+        email = st.text_input("📧 E-Mail", key="setup_email")
+        street = st.text_input("🏠 Straße & Hausnummer", key="setup_street")
+        city = st.text_input("🏙️ Ort / Stadt", key="setup_city")
 
         if st.button("✅ Setup abschließen"):
             if not orgname:
@@ -66,32 +69,17 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    # SPEICHERUNG DER SETUP-DATEN
-                    c.execute("""
-                        INSERT OR REPLACE INTO meta (key, value)
-                        VALUES (?, ?)
-                    """, ("business_name", orgname))
-
-                    c.execute("""
-                        INSERT OR REPLACE INTO meta (key, value)
-                        VALUES (?, ?)
-                    """, ("business_note", orgaddr or ""))
-
-                    # WICHTIG: setup_done MUSS IN DIE SETUP-TABELLE!
-                    c.execute("""
-                        INSERT OR REPLACE INTO setup (key, value)
-                        VALUES ('setup_done', 'yes')
-                    """)
+                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_name", orgname))
+                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_phone", phone or ""))
+                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_email", email or ""))
+                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_street", street or ""))
+                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_city", city or ""))
+                    c.execute("INSERT OR REPLACE INTO setup (key, value) VALUES (?, ?)", ("setup_done", "yes"))
 
                 st.success("🎉 Setup erfolgreich abgeschlossen!")
                 st.balloons()
-
-                # Kurz warten, dann App neu starten
                 time.sleep(1)
-
-                # Nur Session zurücksetzen, nicht den Setup-Status überschreiben
                 st.session_state.clear()
-
                 st.rerun()
 
             except Exception as e:
