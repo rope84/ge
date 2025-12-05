@@ -26,10 +26,16 @@ def render_setup():
             try:
                 with conn() as c:
                     # Existenz prüfen
-                    exists = c.execute("SELECT 1 FROM users WHERE username = ?", (admin_user.strip(),)).fetchone()
+                    exists = c.execute(
+                        "SELECT 1 FROM users WHERE username = ?",
+                        (admin_user.strip(),)
+                    ).fetchone()
+
                     if exists:
-                        c.execute("UPDATE users SET passhash=?, functions='admin', status='active' WHERE username=?",
-                                  (_hash_password(admin_pass), admin_user.strip()))
+                        c.execute("""
+                            UPDATE users SET passhash=?, functions='admin', status='active'
+                            WHERE username=?
+                        """, (_hash_password(admin_pass), admin_user.strip()))
                     else:
                         c.execute("""
                             INSERT INTO users (username, passhash, functions, status)
@@ -60,15 +66,32 @@ def render_setup():
 
             try:
                 with conn() as c:
-                    # SPEICHERUNG IN META
-                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_name", orgname))
-                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("business_note", orgaddr or ""))
-                    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("setup_done", "yes"))
+                    # SPEICHERUNG DER SETUP-DATEN
+                    c.execute("""
+                        INSERT OR REPLACE INTO meta (key, value)
+                        VALUES (?, ?)
+                    """, ("business_name", orgname))
+
+                    c.execute("""
+                        INSERT OR REPLACE INTO meta (key, value)
+                        VALUES (?, ?)
+                    """, ("business_note", orgaddr or ""))
+
+                    # WICHTIG: setup_done MUSS IN DIE SETUP-TABELLE!
+                    c.execute("""
+                        INSERT OR REPLACE INTO setup (key, value)
+                        VALUES ('setup_done', 'yes')
+                    """)
 
                 st.success("🎉 Setup erfolgreich abgeschlossen!")
                 st.balloons()
-                time.sleep(2)
+
+                # Kurz warten, dann App neu starten
+                time.sleep(1)
+
+                # Nur Session zurücksetzen, nicht den Setup-Status überschreiben
                 st.session_state.clear()
+
                 st.rerun()
 
             except Exception as e:
