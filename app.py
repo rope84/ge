@@ -1,5 +1,5 @@
 
-# app_topbar_buttons.py
+# app_topbar_responsive.py
 
 import traceback
 import importlib
@@ -96,11 +96,52 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def topbar_buttons():
+def topbar_responsive():
     if not st.session_state.get("auth"):
         return
 
-    st.markdown(f"<h3 style='margin-bottom: 0;'>{APP_NAME}</h3>", unsafe_allow_html=True)
+    # CSS für schöne Buttons und responsive flex-wrap
+    st.markdown("""
+    <style>
+    .topnav-container {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .nav-btn {
+        background-color: #262730;
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 0.4rem 1rem;
+        font-size: 0.9rem;
+        color: #fff;
+        text-align: center;
+        cursor: pointer;
+        transition: 0.2s ease-in-out;
+    }
+    .nav-btn:hover {
+        background-color: #40414e;
+    }
+    .user-info {
+        margin-left: auto;
+        font-size: 0.85rem;
+        color: #bbb;
+    }
+    .logout-btn {
+        background-color: transparent;
+        border: 1px solid #999;
+        color: #eee;
+        padding: 0.3rem 0.8rem;
+        border-radius: 5px;
+        margin-left: 1rem;
+    }
+    .logout-btn:hover {
+        background-color: #333;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     role = st.session_state.get("role", "user").lower()
     funcs = st.session_state.get("scope", "").lower()
@@ -111,18 +152,29 @@ def topbar_buttons():
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    cols = st.columns([len(pages)] + [1] * (len(pages) - 1) + [3, 1])
-    for i, page in enumerate(pages):
-        if cols[i].button(page, use_container_width=True):
+    # HTML-Topbar erzeugen
+    html = '<div class="topnav-container">'
+    for page in pages:
+        html += f"""
+            <form method="post">
+                <button class="nav-btn" name="nav_{page}" type="submit">{page}</button>
+            </form>
+        """
+    html += f"""
+        <div class="user-info">👤 {st.session_state['username']} ({st.session_state['role']})</div>
+        <form method="post">
+            <button class="logout-btn" name="logout" type="submit">Logout</button>
+        </form>
+    </div>"""
+    st.markdown(html, unsafe_allow_html=True)
+
+    for page in pages:
+        if st.session_state.get(f"nav_{page}"):
             st.session_state["nav_choice"] = page
+            st.session_state[f"nav_{page}"] = False
 
-    with cols[-2]:
-        st.caption(f"👤 {st.session_state['username']} ({st.session_state['role']})")
-    with cols[-1]:
-        if st.button("Logout"):
-            logout()
-
-    st.markdown("---")
+    if st.session_state.get("logout"):
+        logout()
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -163,7 +215,7 @@ def route():
 
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-    st.markdown('<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
+    st.markdown('<style>.block-container { padding-top: 0.5rem; }</style>', unsafe_allow_html=True)
     use_theme()
 
     if not is_setup_done():
@@ -171,7 +223,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        topbar_buttons()
+        topbar_responsive()
         route()
 
 if __name__ == "__main__":
