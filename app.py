@@ -102,7 +102,7 @@ def topbar_responsive():
 
     # Stil aus externer Datei laden
     try:
-        with open("modern_topbar.css") as f:
+        with open("assets/modern_topbar.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except:
         st.warning("⚠️ CSS-Datei 'modern_topbar.css' nicht gefunden.")
