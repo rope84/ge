@@ -98,7 +98,25 @@ def sidebar_with_icons():
         return
 
     st.markdown("""
-    <style>
+    
+<style>
+.sidebar .icon {
+    font-size: 2.4rem;
+    color: #ccc;
+    transition: color 0.2s ease-in-out;
+}
+.sidebar .icon:hover {
+    color: #fff;
+}
+.sidebar .user-info {
+    margin-top: auto;
+    font-size: 0.75rem;
+    color: #888;
+    padding: 1rem 0;
+    text-align: center;
+}
+</style>
+<style>
     section[data-testid="stSidebar"] {
         background-color: #1f1f2e;
     }
@@ -177,7 +195,25 @@ def route():
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
     use_theme()
-    st.markdown('<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
+    st.markdown('
+<style>
+.sidebar .icon {
+    font-size: 2.4rem;
+    color: #ccc;
+    transition: color 0.2s ease-in-out;
+}
+.sidebar .icon:hover {
+    color: #fff;
+}
+.sidebar .user-info {
+    margin-top: auto;
+    font-size: 0.75rem;
+    color: #888;
+    padding: 1rem 0;
+    text-align: center;
+}
+</style>
+<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
 
     if not is_setup_done():
         modules["setup"]()
