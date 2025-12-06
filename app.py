@@ -1,4 +1,5 @@
-# app_topbar_responsive.py
+
+# app_topbar_responsive_modern.py
 
 import traceback
 import importlib
@@ -95,43 +96,44 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def topbar_responsive():
+def topbar_modern():
     if not st.session_state.get("auth"):
         return
 
-    # Styles für Navigation
     st.markdown("""
     <style>
-    .topnav-container {
+    .topnav {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 1rem;
+        background-color: #1c1c1e;
+        padding: 10px 16px;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
     }
-    .nav-btn, .logout-btn {
-        background-color: #262730;
-        border: 1px solid #444;
-        border-radius: 6px;
-        padding: 0.4rem 1.2rem;
-        font-size: 0.9rem;
+    .topnav button {
+        background-color: #2c2c2e;
+        border: none;
         color: white;
-        text-align: center;
-        transition: 0.2s ease-in-out;
+        padding: 10px 16px;
+        margin: 4px;
+        font-size: 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background-color 0.2s ease-in-out;
     }
-    .nav-btn:hover, .logout-btn:hover {
-        background-color: #40414e;
+    .topnav button:hover {
+        background-color: #3a3a3c;
     }
-    .user-info {
+    .topnav .user-info {
         margin-left: auto;
-        font-size: 0.85rem;
-        color: #bbb;
-        padding-right: 0.5rem;
+        font-size: 13px;
+        color: #aaa;
+        padding: 0 8px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # Seitenliste dynamisch
     pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
     role = st.session_state.get("role", "user").lower()
     funcs = st.session_state.get("scope", "").lower()
@@ -141,22 +143,15 @@ def topbar_responsive():
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    # Topbar Layout in Columns
-    cols = st.columns([len(pages)] + [1, 1])  # Navigation | User | Logout
-
-    for i, page in enumerate(pages):
-        if cols[0].button(page, key=f"nav_{page}", use_container_width=True):
+    # Navigation-Buttons
+    st.markdown('<div class="topnav">', unsafe_allow_html=True)
+    for page in pages:
+        if st.button(page, key=f"nav_{page}"):
             st.session_state["nav_choice"] = page
-
-    with cols[1]:
-        st.markdown(
-            f"""<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>""",
-            unsafe_allow_html=True
-        )
-
-    with cols[2]:
-        if st.button("Logout", key="logout_btn"):
-            logout()
+    st.markdown(f'<div class="user-info">👤 {st.session_state["username"]} ({st.session_state["role"]})</div>', unsafe_allow_html=True)
+    if st.button("Logout"):
+        logout()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -205,7 +200,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        topbar_responsive()
+        topbar_modern()
         route()
 
 if __name__ == "__main__":
