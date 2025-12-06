@@ -1,4 +1,3 @@
-
 import traceback
 import importlib
 import streamlit as st
@@ -94,57 +93,19 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def custom_layout_sidebar():
+def sidebar_with_icons():
     if not st.session_state.get("auth"):
         return
 
     st.markdown("""
     <style>
-    .layout-container {
-        display: flex;
-        height: 100vh;
-        overflow: hidden;
-    }
-    .sidebar {
+    section[data-testid="stSidebar"] {
         background-color: #1f1f2e;
-        width: 90px;
-        padding-top: 1rem;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: space-between;
-        color: white;
     }
-    .nav-icons {
-        display: flex;
-        flex-direction: column;
-        gap: 2rem;
-        align-items: center;
-    }
-    .sidebar i {
-        font-size: 2.4rem;
-        color: #ccc;
-        cursor: pointer;
-        transition: color 0.2s;
-    }
-    .sidebar i:hover {
-        color: white;
-    }
-    .user-info {
-        font-size: 0.75rem;
-        color: #aaa;
-        padding-bottom: 1rem;
-        text-align: center;
-    }
-    .logout-btn {
-        background: none;
-        border: none;
-        color: #888;
-        cursor: pointer;
-        font-size: 1.4rem;
-    }
-    .logout-btn:hover {
-        color: red;
+    .sidebar-icon-button > button {
+        width: 100%;
+        padding: 1rem 0;
+        font-size: 1.6rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -158,36 +119,23 @@ def custom_layout_sidebar():
         pages.append("Admin-Cockpit")
 
     NAV_ICONS = {
-        "Start": "fa-house",
-        "Abrechnung": "fa-cash-register",
-        "Dashboard": "fa-chart-line",
-        "Inventur": "fa-boxes-stacked",
-        "Profil": "fa-user",
-        "Admin-Cockpit": "fa-tools"
+        "Start": "🏠",
+        "Abrechnung": "🧾",
+        "Dashboard": "📊",
+        "Inventur": "📦",
+        "Profil": "👤",
+        "Admin-Cockpit": "🛠️"
     }
 
-    st.markdown(f"""<div class='layout-container'>
-        <div class='sidebar'>
-            <div class='nav-icons'>
-                {''.join([
-                    f"<i class='fas {NAV_ICONS.get(p, 'fa-circle')}' onclick=\"window.location.search='?nav_choice={p}'\" title='{p}'></i>"
-                    for p in pages
-                ])}
-                <form method='post'>
-                    <button class='logout-btn' name='logout' type='submit' title='Logout'>⎋</button>
-                </form>
-            </div>
-            <div class='user-info'>
-                👤 {st.session_state.get("username", "Gast")}<br>
-                Rolle: {st.session_state.get("role", "user")}<br>
-                <i>{APP_NAME} {APP_VERSION}</i>
-            </div>
-        </div>
-        <div class='main-content'>
-    """, unsafe_allow_html=True)
+    with st.sidebar:
+        for p in pages:
+            if st.button(f"{NAV_ICONS.get(p, '❓')}", key=f"nav_{p}", help=p):
+                st.session_state["nav_choice"] = p
 
-def close_sidebar_wrapper():
-    st.markdown("</div></div>", unsafe_allow_html=True)
+        st.markdown("---")
+        st.write(f"👤 {st.session_state.get('username')} ({st.session_state.get('role')})")
+        if st.button("⎋", key="logout_btn", help="Logout"):
+            logout()
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -228,18 +176,16 @@ def route():
 
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-    st.markdown('<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">', unsafe_allow_html=True)
-    st.markdown('<style>.block-container { padding-top: 0.5rem; }</style>', unsafe_allow_html=True)
     use_theme()
+    st.markdown('<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
 
     if not is_setup_done():
         modules["setup"]()
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        custom_layout_sidebar()
+        sidebar_with_icons()
         route()
-        close_sidebar_wrapper()
 
 if __name__ == "__main__":
     main()
