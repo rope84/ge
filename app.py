@@ -1,4 +1,3 @@
-
 # app_topbar_responsive.py
 
 import traceback
@@ -100,7 +99,7 @@ def topbar_responsive():
     if not st.session_state.get("auth"):
         return
 
-    # CSS für schöne Buttons und responsive flex-wrap
+    # Styles für Navigation
     st.markdown("""
     <style>
     .topnav-container {
@@ -110,71 +109,54 @@ def topbar_responsive():
         gap: 0.5rem;
         margin-bottom: 1rem;
     }
-    .nav-btn {
+    .nav-btn, .logout-btn {
         background-color: #262730;
         border: 1px solid #444;
         border-radius: 6px;
-        padding: 0.4rem 1rem;
+        padding: 0.4rem 1.2rem;
         font-size: 0.9rem;
-        color: #fff;
+        color: white;
         text-align: center;
-        cursor: pointer;
         transition: 0.2s ease-in-out;
     }
-    .nav-btn:hover {
+    .nav-btn:hover, .logout-btn:hover {
         background-color: #40414e;
     }
     .user-info {
         margin-left: auto;
         font-size: 0.85rem;
         color: #bbb;
-    }
-    .logout-btn {
-        background-color: transparent;
-        border: 1px solid #999;
-        color: #eee;
-        padding: 0.3rem 0.8rem;
-        border-radius: 5px;
-        margin-left: 1rem;
-    }
-    .logout-btn:hover {
-        background-color: #333;
+        padding-right: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
 
+    # Seitenliste dynamisch
+    pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
     role = st.session_state.get("role", "user").lower()
     funcs = st.session_state.get("scope", "").lower()
 
-    pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
     if "inventur" in funcs or role == "admin":
         pages.insert(3, "Inventur")
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    # HTML-Topbar erzeugen
-    html = '<div class="topnav-container">'
-    for page in pages:
-        html += f"""
-            <form method="post">
-                <button class="nav-btn" name="nav_{page}" type="submit">{page}</button>
-            </form>
-        """
-    html += f"""
-        <div class="user-info">👤 {st.session_state['username']} ({st.session_state['role']})</div>
-        <form method="post">
-            <button class="logout-btn" name="logout" type="submit">Logout</button>
-        </form>
-    </div>"""
-    st.markdown(html, unsafe_allow_html=True)
+    # Topbar Layout in Columns
+    cols = st.columns([len(pages)] + [1, 1])  # Navigation | User | Logout
 
-    for page in pages:
-        if st.session_state.get(f"nav_{page}"):
+    for i, page in enumerate(pages):
+        if cols[0].button(page, key=f"nav_{page}", use_container_width=True):
             st.session_state["nav_choice"] = page
-            st.session_state[f"nav_{page}"] = False
 
-    if st.session_state.get("logout"):
-        logout()
+    with cols[1]:
+        st.markdown(
+            f"""<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>""",
+            unsafe_allow_html=True
+        )
+
+    with cols[2]:
+        if st.button("Logout", key="logout_btn"):
+            logout()
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
