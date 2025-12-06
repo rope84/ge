@@ -99,15 +99,15 @@ def login_screen():
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Benutzername, Passwort und Status.")
 
-# ---------------- Sidebar ----------------
-def sidebar():
+# ---------------- Top-Bar Navigation ----------------
+def topbar():
     if not st.session_state.get("auth"):
         return
 
     # CSS Fixes
     st.markdown("""
         <style>
-        div[data-testid="stSidebar"] > div:first-child {
+        div[data-testid="topbar"] {
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -121,7 +121,7 @@ def sidebar():
         </style>
     """, unsafe_allow_html=True)
 
-    with st.sidebar:
+    with st.container():
         with st.container():
             query_params = st.query_params
             if "nav_choice" in query_params:
@@ -149,11 +149,11 @@ def sidebar():
             if role == "admin":
                 display_pages.append("Admin-Cockpit")
 
-            st.radio(
+            st.selectbox(
                 "Navigation",
                 display_pages,
                 index=display_pages.index(st.session_state.get("nav_choice", "Start")),
-                label_visibility="collapsed",
+                
                 key="nav_choice",
             )
 
@@ -235,7 +235,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        sidebar()
+        topbar()
         route()
 
 if __name__ == "__main__":
