@@ -94,47 +94,86 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def sidebar_with_icons():
+def custom_layout_sidebar():
     if not st.session_state.get("auth"):
         return
 
-    with open("assets/modern_topbar_icons.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-    NAV_ICONS = {
-        "Start": "fa-solid fa-house",
-        "Abrechnung": "fa-solid fa-cash-register",
-        "Dashboard": "fa-solid fa-chart-pie",
-        "Inventur": "fa-solid fa-boxes-stacked",
-        "Profil": "fa-solid fa-user",
-        "Admin-Cockpit": "fa-solid fa-screwdriver-wrench"
+    # Sidebar HTML & CSS Layout
+    st.markdown("""
+    <style>
+    .layout-container {
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
     }
-
-    role = st.session_state.get("role", "user").lower()
-    funcs = st.session_state.get("scope", "").lower()
+    .sidebar {
+        background-color: #1f1f2e;
+        width: 80px;
+        padding-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.4rem;
+        color: white;
+    }
+    .sidebar i {
+        font-size: 1.6rem;
+        color: #bbb;
+        cursor: pointer;
+    }
+    .sidebar i:hover {
+        color: white;
+    }
+    .main-content {
+        flex-grow: 1;
+        padding: 1rem 2rem;
+    }
+    .logout-btn {
+        margin-top: auto;
+        margin-bottom: 1rem;
+        background: none;
+        border: none;
+        color: #888;
+        cursor: pointer;
+    }
+    .logout-btn:hover {
+        color: red;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+    role = st.session_state.get("role", "user").lower()
+    funcs = st.session_state.get("scope", "").lower()
     if "inventur" in funcs or role == "admin":
         pages.insert(3, "Inventur")
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    with st.sidebar:
-        st.markdown("<div class='icon-sidebar'>", unsafe_allow_html=True)
-        for page in pages:
-            icon_class = NAV_ICONS.get(page, "fa-solid fa-circle")
-            st.markdown(
-                f"""<button class='icon-btn' title='{page}' onclick="window.location.search='?nav_choice={page}'">
-                        <i class='{icon_class}'></i>
-                    </button>""",
-                unsafe_allow_html=True
-            )
-        st.markdown(f"""<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>""", unsafe_allow_html=True)
-        st.markdown(f"""<form method='post'><button class='logout-btn' name='logout' type='submit'>Logout</button></form>""", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    NAV_ICONS = {
+        "Start": "fa-house",
+        "Abrechnung": "fa-cash-register",
+        "Dashboard": "fa-chart-line",
+        "Inventur": "fa-boxes-stacked",
+        "Profil": "fa-user",
+        "Admin-Cockpit": "fa-tools"
+    }
 
-    if "logout" in st.session_state:
-        logout()
+    st.markdown(f"""<div class='layout-container'>
+        <div class='sidebar'>
+            {''.join([
+                f"<i class='fas {NAV_ICONS.get(p, 'fa-circle')}' onclick=\"window.location.search='?nav_choice={p}'\"></i>"
+                for p in pages
+            ])}
+            <form method='post'>
+                <button class='logout-btn' name='logout' type='submit'>⎋</button>
+            </form>
+        </div>
+        <div class='main-content'>
+    """, unsafe_allow_html=True)
+
+def close_sidebar_wrapper():
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -175,6 +214,7 @@ def route():
 
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
+    st.markdown('<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">', unsafe_allow_html=True)
     st.markdown('<style>.block-container { padding-top: 0.5rem; }</style>', unsafe_allow_html=True)
     use_theme()
 
@@ -183,8 +223,9 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        sidebar_with_icons()
+        custom_layout_sidebar()
         route()
+        close_sidebar_wrapper()
 
 if __name__ == "__main__":
     main()
