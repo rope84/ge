@@ -1,5 +1,5 @@
 
-# app_topbar_responsive_modern.py
+# app_topbar_responsive.py
 
 import traceback
 import importlib
@@ -96,43 +96,16 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def topbar_modern():
+def topbar_responsive():
     if not st.session_state.get("auth"):
         return
 
-    st.markdown("""
-    <style>
-    .topnav {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        background-color: #1c1c1e;
-        padding: 10px 16px;
-        border-radius: 8px;
-        margin-bottom: 1.5rem;
-    }
-    .topnav button {
-        background-color: #2c2c2e;
-        border: none;
-        color: white;
-        padding: 10px 16px;
-        margin: 4px;
-        font-size: 14px;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: background-color 0.2s ease-in-out;
-    }
-    .topnav button:hover {
-        background-color: #3a3a3c;
-    }
-    .topnav .user-info {
-        margin-left: auto;
-        font-size: 13px;
-        color: #aaa;
-        padding: 0 8px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Stil aus externer Datei laden
+    try:
+        with open("modern_topbar.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except:
+        st.warning("⚠️ CSS-Datei 'modern_topbar.css' nicht gefunden.")
 
     pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
     role = st.session_state.get("role", "user").lower()
@@ -143,15 +116,18 @@ def topbar_modern():
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    # Navigation-Buttons
-    st.markdown('<div class="topnav">', unsafe_allow_html=True)
+    st.markdown("<div class='topnav-container'>", unsafe_allow_html=True)
+
     for page in pages:
-        if st.button(page, key=f"nav_{page}"):
-            st.session_state["nav_choice"] = page
-    st.markdown(f'<div class="user-info">👤 {st.session_state["username"]} ({st.session_state["role"]})</div>', unsafe_allow_html=True)
-    if st.button("Logout"):
-        logout()
-    st.markdown('</div>', unsafe_allow_html=True)
+        with st.form(key=f"form_{page}"):
+            st.form_submit_button(page, use_container_width=True, on_click=lambda p=page: st.session_state.update({"nav_choice": p}))
+
+    st.markdown(f"<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>", unsafe_allow_html=True)
+
+    with st.form("logout_form"):
+        st.form_submit_button("Logout", on_click=logout)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -200,7 +176,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        topbar_modern()
+        topbar_responsive()
         route()
 
 if __name__ == "__main__":
