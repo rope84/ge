@@ -1,15 +1,13 @@
-# app.py
+
+# app_topbar_buttons.py
 
 import traceback
-import datetime
 import importlib
 import streamlit as st
-
 from core.db import setup_db, conn
 from core.ui_theme import use_theme
 from core.config import APP_NAME, APP_VERSION
 
-# ---------------- Initial Setup ----------------
 setup_db()
 
 try:
@@ -21,7 +19,6 @@ try:
 except Exception as e:
     print("[WARNUNG] Auth-Initialisierung fehlgeschlagen:", e)
 
-# ---------------- Setup-Erkennung ----------------
 def is_setup_done() -> bool:
     try:
         with conn() as c:
@@ -30,10 +27,8 @@ def is_setup_done() -> bool:
     except Exception:
         return False
 
-# ---------------- Dynamic Module Import ----------------
 def import_modules():
     modules, errors, loaded_meta = {}, {}, {}
-
     def try_import(qualified_name: str):
         base = qualified_name.split(".")[-1]
         try:
@@ -44,15 +39,12 @@ def import_modules():
         except Exception as e:
             modules[base] = None
             errors[base] = f"{type(e).__name__}: {e}\n\n" + traceback.format_exc()
-
     for mod_name in ["start", "cashflow", "dashboard", "inventur", "profile", "admin", "setup"]:
         try_import(f"modules.{mod_name}")
-
     return modules, errors, loaded_meta
 
 modules, import_errors, import_meta = import_modules()
 
-# ---------------- Session Init ----------------
 def init_session():
     s = st.session_state
     s.setdefault("auth", False)
@@ -63,7 +55,6 @@ def init_session():
 
 init_session()
 
-# ---------------- Auth ----------------
 def logout():
     st.session_state.clear()
     init_session()
@@ -77,11 +68,9 @@ def login_screen():
     u, p, pressed = render_login_form(APP_NAME, APP_VERSION)
     if not pressed:
         return
-
     if not u or not p:
         st.error("Bitte Benutzername und Passwort eingeben.")
         return
-
     try:
         auth = _lazy_auth()
         ok, role, scope = auth._do_login(u, p)
@@ -89,7 +78,6 @@ def login_screen():
         st.error("Login-Fehler.")
         st.exception(e)
         return
-
     if ok:
         st.session_state["auth"] = True
         st.session_state["username"] = u
@@ -99,82 +87,6 @@ def login_screen():
     else:
         st.error("❌ Login fehlgeschlagen. Prüfe Benutzername, Passwort und Status.")
 
-# ---------------- Top-Bar Navigation ----------------
-def topbar():
-    if not st.session_state.get("auth"):
-        return
-
-    # CSS Fixes
-    st.markdown("""
-        <style>
-        div[data-testid="topbar"] {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            height: 100%;
-        }
-        .sidebar-footer {
-            font-size: 12px;
-            color: gray;
-            padding: 8px 16px 16px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    with st.container():
-        with st.container():
-            query_params = st.query_params
-            if "nav_choice" in query_params:
-                st.session_state["nav_choice"] = query_params["nav_choice"]
-                st.query_params.clear()
-
-            if st.session_state.get("nav_to"):
-                st.session_state["nav_choice"] = st.session_state.pop("nav_to")
-
-            if st.session_state.get("go_profile"):
-                st.session_state["nav_choice"] = "Profil"
-                del st.session_state["go_profile"]
-
-            st.markdown(f"### {APP_NAME}")
-            st.caption(APP_VERSION)
-
-            funcs = (st.session_state.get("scope") or "").lower()
-            role = (st.session_state.get("role") or "").lower()
-
-            display_pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
-
-            if ("inventur" in funcs) or (role == "admin"):
-                display_pages.insert(3, "Inventur")
-
-            if role == "admin":
-                display_pages.append("Admin-Cockpit")
-
-            st.selectbox(
-                "Navigation",
-                display_pages,
-                index=display_pages.index(st.session_state.get("nav_choice", "Start")),
-                
-                key="nav_choice",
-            )
-
-            st.divider()
-            if st.button("Logout", use_container_width=True):
-                logout()
-
-        st.markdown("""
-            <div class="sidebar-footer">
-                👤 {username}<br>
-                Rolle: <b>{role}</b><br>
-                <i>{app_name} {app_version}</i>
-            </div>
-        """.format(
-            username=st.session_state.get('username', 'Gast'),
-            role=st.session_state.get('role', 'user'),
-            app_name=APP_NAME,
-            app_version=APP_VERSION
-        ), unsafe_allow_html=True)
-
-# ---------------- Routing ----------------
 DISPLAY_TO_MODULE = {
     "start": "start",
     "abrechnung": "cashflow",
@@ -183,6 +95,34 @@ DISPLAY_TO_MODULE = {
     "profil": "profile",
     "admin-cockpit": "admin",
 }
+
+def topbar_buttons():
+    if not st.session_state.get("auth"):
+        return
+
+    st.markdown(f"<h3 style='margin-bottom: 0;'>{APP_NAME}</h3>", unsafe_allow_html=True)
+
+    role = st.session_state.get("role", "user").lower()
+    funcs = st.session_state.get("scope", "").lower()
+
+    pages = ["Start", "Abrechnung", "Dashboard", "Profil"]
+    if "inventur" in funcs or role == "admin":
+        pages.insert(3, "Inventur")
+    if role == "admin":
+        pages.append("Admin-Cockpit")
+
+    cols = st.columns([len(pages)] + [1] * (len(pages) - 1) + [3, 1])
+    for i, page in enumerate(pages):
+        if cols[i].button(page, use_container_width=True):
+            st.session_state["nav_choice"] = page
+
+    with cols[-2]:
+        st.caption(f"👤 {st.session_state['username']} ({st.session_state['role']})")
+    with cols[-1]:
+        if st.button("Logout"):
+            logout()
+
+    st.markdown("---")
 
 def route():
     display_key = (st.session_state.get("nav_choice") or "Start").lower()
@@ -221,13 +161,9 @@ def route():
         st.error(f"❌ Laufzeitfehler in '{mod_key}.py'")
         st.code(traceback.format_exc(), language="text")
 
-# ---------------- Main ----------------
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🍸", layout="wide")
-
-    # Globale Top-Padding-Reduktion
     st.markdown('<style>.block-container { padding-top: 1rem; }</style>', unsafe_allow_html=True)
-
     use_theme()
 
     if not is_setup_done():
@@ -235,7 +171,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        topbar()
+        topbar_buttons()
         route()
 
 if __name__ == "__main__":
