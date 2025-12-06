@@ -1,0 +1,44 @@
+
+<style>
+/* Allgemeines Container-Styling */
+.topnav-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background-color: #1c1c1e;
+    padding: 0.75rem 1.2rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* Navigation Buttons */
+.nav-btn, .logout-btn {
+    background: linear-gradient(145deg, #2a2a2e, #1e1e22);
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 1.3rem;
+    font-size: 0.88rem;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    text-align: center;
+    font-weight: 500;
+}
+
+.nav-btn:hover, .logout-btn:hover {
+    background: #353535;
+    color: #fff;
+    border-color: #666;
+    transform: scale(1.03);
+}
+
+/* Benutzeranzeige */
+.user-info {
+    margin-left: auto;
+    font-size: 0.9rem;
+    color: #ccc;
+    padding: 0.4rem 0.75rem;
+}
+</style>
