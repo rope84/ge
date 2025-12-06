@@ -94,12 +94,12 @@ DISPLAY_TO_MODULE = {
     "admin-cockpit": "admin",
 }
 
-def topbar_with_icons():
+def sidebar_with_icons():
     if not st.session_state.get("auth"):
         return
 
     with open("assets/modern_topbar_icons.css") as f:
-        st.markdown(f.read(), unsafe_allow_html=True)
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
     NAV_ICONS = {
         "Start": "fa-solid fa-house",
@@ -119,17 +119,19 @@ def topbar_with_icons():
     if role == "admin":
         pages.append("Admin-Cockpit")
 
-    st.markdown("<div class='topnav-container'>", unsafe_allow_html=True)
-    for page in pages:
-        icon_class = NAV_ICONS.get(page, "fa-solid fa-circle")
-        st.markdown(
-            f"""<button class='icon-btn' title='{page}' onclick="window.location.search='?nav_choice={page}'">
-                    <i class='{icon_class}'></i>
-                </button>""",
-            unsafe_allow_html=True
-        )
-    st.markdown(f"""<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>""", unsafe_allow_html=True)
-    st.markdown(f"""<form method='post'><button class='logout-btn' name='logout' type='submit'>Logout</button></form></div>""", unsafe_allow_html=True)
+    with st.sidebar:
+        st.markdown("<div class='icon-sidebar'>", unsafe_allow_html=True)
+        for page in pages:
+            icon_class = NAV_ICONS.get(page, "fa-solid fa-circle")
+            st.markdown(
+                f"""<button class='icon-btn' title='{page}' onclick="window.location.search='?nav_choice={page}'">
+                        <i class='{icon_class}'></i>
+                    </button>""",
+                unsafe_allow_html=True
+            )
+        st.markdown(f"""<div class='user-info'>👤 {st.session_state['username']} ({st.session_state['role']})</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<form method='post'><button class='logout-btn' name='logout' type='submit'>Logout</button></form>""", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     if "logout" in st.session_state:
         logout()
@@ -181,7 +183,7 @@ def main():
     elif not st.session_state.get("auth"):
         login_screen()
     else:
-        topbar_with_icons()
+        sidebar_with_icons()
         route()
 
 if __name__ == "__main__":
