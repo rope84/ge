@@ -98,6 +98,19 @@ def custom_layout_sidebar():
     if not st.session_state.get("auth"):
         return
 
+    # JavaScript to listen to clicks on sidebar icons and update nav_choice
+    st.markdown("""
+    <script>
+    const updateNav = (page) => {
+        const streamlitEvent = new CustomEvent("streamlit:setComponentValue", {
+            detail: { key: "nav_choice", value: page, dataType: "str" }
+        });
+        window.dispatchEvent(streamlitEvent);
+        setTimeout(() => window.location.reload(), 100);
+    }
+    </script>
+    """, unsafe_allow_html=True)
+
     # Sidebar HTML & CSS Layout
     st.markdown("""
     <style>
@@ -117,7 +130,7 @@ def custom_layout_sidebar():
         color: white;
     }
     .sidebar i {
-        font-size: 1.6rem;
+        font-size: 1.8rem;
         color: #bbb;
         cursor: pointer;
     }
@@ -162,7 +175,7 @@ def custom_layout_sidebar():
     st.markdown(f"""<div class='layout-container'>
         <div class='sidebar'>
             {''.join([
-                f"<i class='fas {NAV_ICONS.get(p, 'fa-circle')}' onclick=\"window.location.search='?nav_choice={p}'\"></i>"
+                f"<i class='fas {NAV_ICONS.get(p, 'fa-circle')}' onclick=\"updateNav('{p}')\"></i>"
                 for p in pages
             ])}
             <form method='post'>
