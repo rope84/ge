@@ -1,157 +1,114 @@
-# core/db.py
+"""core/db.py
 
+Provides a sqlite connection factory with configurable DB path and backup utilities.
+Environment variables:
+ - GE_DB_PATH: path to sqlite database file (default: ./ge.db)
+ - GE_BACKUP_DIR: directory where DB backups are stored (default: ./backups)
+
+Includes backup rotation keeping the most recent 7 backups.
+Uses logging instead of prints.
+"""
+
+from contextlib import contextmanager
+import os
 import sqlite3
 import shutil
-import time
+import logging
+from datetime import datetime
 from pathlib import Path
+from typing import Iterator, Optional
 
-DB_PATH = "gastro.db"
-BACKUP_DIR = Path("DB_BCK")
+logger = logging.getLogger(__name__)
 
-
-# ---------- Low-level helpers ----------
-def conn():
-    """Öffnet eine SQLite-Verbindung (thread-safe off, passend für Streamlit)."""
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+DB_PATH = os.getenv("GE_DB_PATH", "ge.db")
+BACKUP_DIR = os.getenv("GE_BACKUP_DIR", "./backups")
+BACKUP_KEEP = int(os.getenv("GE_BACKUPS_KEEP", "7"))
 
 
-def _table_has_column(c, table: str, col: str) -> bool:
-    c.execute(f"PRAGMA table_info({table})")
-    return any(row[1] == col for row in c.fetchall())
+def get_db_path() -> str:
+    return str(Path(DB_PATH).expanduser().resolve())
 
 
-def _add_column_if_missing(c, table: str, col: str, ddl: str):
-    if not _table_has_column(c, table, col):
-        c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+def get_backup_dir() -> str:
+    return str(Path(BACKUP_DIR).expanduser().resolve())
 
 
-# ---------- Migrations ----------
-def _ensure_schema_migrations(c):
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS schema_migrations(
-            id INTEGER PRIMARY KEY CHECK (id=1),
-            version INTEGER NOT NULL
-        )
-    """)
-    row = c.execute("SELECT version FROM schema_migrations WHERE id=1").fetchone()
-    if row is None:
-        c.execute("INSERT INTO schema_migrations(id, version) VALUES (1, 0)")
-
-
-def _get_version(c) -> int:
-    row = c.execute("SELECT version FROM schema_migrations WHERE id=1").fetchone()
-    return row[0] if row else 0
-
-
-def _set_version(c, v: int):
-    c.execute("UPDATE schema_migrations SET version=? WHERE id=1", (v,))
-
-
-def migrate():
-    """Führt idempotente Migrationen durch."""
-    with conn() as cn:
-        c = cn.cursor()
-        _ensure_schema_migrations(c)
-        ver = _get_version(c)
-
-        # USERS Tabelle
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username    TEXT UNIQUE NOT NULL,
-                passhash    TEXT NOT NULL,
-                functions   TEXT DEFAULT '',
-                status      TEXT DEFAULT 'active',
-                role        TEXT DEFAULT '',
-                scope       TEXT DEFAULT '',
-                email       TEXT DEFAULT '',
-                first_name  TEXT DEFAULT '',
-                last_name   TEXT DEFAULT ''
-            );
-        """)
-        _add_column_if_missing(c, "users", "functions", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "status", "TEXT DEFAULT 'active'")
-        _add_column_if_missing(c, "users", "role", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "scope", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "email", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "first_name", "TEXT DEFAULT ''")
-        _add_column_if_missing(c, "users", "last_name", "TEXT DEFAULT ''")
-
-        # EMPLOYEES Tabelle
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS employees (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name        TEXT NOT NULL,
-                contract    TEXT NOT NULL,
-                hourly      REAL NOT NULL DEFAULT 0,
-                is_barlead  INTEGER NOT NULL DEFAULT 0,
-                bar_no      INTEGER
-            );
-        """)
-
-        # DAILY Tabelle
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS daily(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                datum TEXT NOT NULL UNIQUE,
-                umsatz_total REAL NOT NULL DEFAULT 0,
-                bar1 REAL NOT NULL DEFAULT 0,
-                bar2 REAL NOT NULL DEFAULT 0,
-                bar3 REAL NOT NULL DEFAULT 0,
-                bar4 REAL NOT NULL DEFAULT 0,
-                bar5 REAL NOT NULL DEFAULT 0,
-                bar6 REAL NOT NULL DEFAULT 0,
-                bar7 REAL NOT NULL DEFAULT 0,
-                kasse1_cash REAL NOT NULL DEFAULT 0,
-                kasse1_card REAL NOT NULL DEFAULT 0,
-                kasse2_cash REAL NOT NULL DEFAULT 0,
-                kasse2_card REAL NOT NULL DEFAULT 0,
-                kasse3_cash REAL NOT NULL DEFAULT 0,
-                kasse3_card REAL NOT NULL DEFAULT 0,
-                garderobe_total REAL NOT NULL DEFAULT 0
-            );
-        """)
-
-        # SETUP Tabelle
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS setup (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-
-        # META Tabelle (NEU!)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-
-        # Schema-Version setzen
-        target_ver = 2
-        if ver < target_ver:
-            _set_version(c, target_ver)
-
-        cn.commit()
-
-# ---------- Setup ----------
-def setup_db():
+@contextmanager
+def conn() -> Iterator[sqlite3.Connection]:
+    """Context manager yielding a sqlite3.Connection. Caller should not call commit/close.
+    Commits any pending transactions and closes the connection on exit.
     """
-    Initialisiert die Datenbank:
-    - legt Datei und Backup-Verzeichnis an
-    - sichert DB vor Migration
-    - führt Migration durch
-    """
-    if not Path(DB_PATH).exists():
-        Path(DB_PATH).touch()
-
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    backup_file = BACKUP_DIR / f"gastro.db.bak_{int(time.time())}"
+    db_file = get_db_path()
+    db_dir = Path(db_file).parent
+    if not db_dir.exists():
+        try:
+            db_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            logger.exception("Failed to create DB directory: %s", db_dir)
+    # ensure file exists (sqlite will create on connect)
     try:
-        shutil.copyfile(DB_PATH, backup_file)
-        print(f"[Backup] Datenbank gesichert als: {backup_file}")
-    except Exception as e:
-        print(f"[WARNUNG] Backup konnte nicht erstellt werden: {e}")
+        cn = sqlite3.connect(db_file, check_same_thread=False)
+    except Exception:
+        logger.exception("Failed to connect to database at %s", db_file)
+        raise
+    try:
+        yield cn
+        try:
+            cn.commit()
+        except Exception:
+            logger.exception("Failed to commit transaction")
+    finally:
+        try:
+            cn.close()
+        except Exception:
+            logger.exception("Failed to close DB connection")
 
-    migrate()
+
+def backup_db() -> Optional[str]:
+    """Create a timestamped copy of the DB in the backup dir and rotate old backups.
+    Returns the path to the created backup or None if no DB file exists.
+    """
+    db_file = Path(get_db_path())
+    if not db_file.exists():
+        logger.info("Database file does not exist, skipping backup: %s", db_file)
+        return None
+
+    backup_dir = Path(get_backup_dir())
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.exception("Failed to create backup directory: %s", backup_dir)
+        return None
+
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    backup_name = f"{db_file.stem}_{timestamp}{db_file.suffix}"
+    backup_path = backup_dir / backup_name
+
+    try:
+        shutil.copy2(str(db_file), str(backup_path))
+        logger.info("Database backed up to %s", backup_path)
+    except Exception:
+        logger.exception("Failed to copy DB to backup location: %s", backup_path)
+        return None
+
+    # rotate backups: keep most recent BACKUP_KEEP files
+    try:
+        backups = sorted([p for p in backup_dir.iterdir() if p.is_file() and p.name.startswith(db_file.stem)], key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in backups[BACKUP_KEEP:]:
+            try:
+                old.unlink()
+                logger.info("Removed old backup: %s", old)
+            except Exception:
+                logger.exception("Failed to remove old backup: %s", old)
+    except Exception:
+        logger.exception("Failed during backup rotation in %s", backup_dir)
+
+    return str(backup_path)
+
+
+# Optionally run a backup on import if env var set
+if os.getenv("GE_BACKUP_ON_STARTUP", "false").lower() in ("1", "true", "yes"):
+    try:
+        backup_db()
+    except Exception:
+        logger.exception("Automatic DB backup on startup failed")

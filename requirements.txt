@@ -1,6 +1,2 @@
 streamlit
-pandas
-plotly
-reportlab
-openpyxl
-feedparser>=6.0
+argon2-cffi

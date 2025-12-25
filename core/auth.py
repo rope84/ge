@@ -1,15 +1,25 @@
+"""# core/auth.py
+
+Updated to use Argon2 for password hashing, support legacy SHA256 re-hashing on login,
+remove hardcoded default admin password (seeded admin will be pending), and use logging.
+"""
+
 import re
 import hashlib
 import importlib
+import logging
 from datetime import datetime
 from typing import Optional, Dict, Tuple, List
+import os
 
 import streamlit as st
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError
 
 from core.db import conn
 
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+logger = logging.getLogger(__name__)
+ph = PasswordHasher()
 
 # -----------------------------
 # Password Policy & Hashing
@@ -18,13 +28,42 @@ PWD_PATTERN = re.compile(r"^(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}$")
 
 
 def hash_pw(pw: str) -> str:
-    return hashlib.sha256((pw or "").encode("utf-8")).hexdigest()
+    """Hash password with Argon2. Empty strings return empty hash.
+    """
+    if not pw:
+        return ""
+    return ph.hash(pw)
 
 
-def verify_pw(pw: str, ph: str) -> bool:
-    if not ph:
+def _verify_legacy_sha256(pw: str, phash: str) -> bool:
+    """Verify legacy SHA256 hex hash."""
+    if not phash:
         return False
-    return hash_pw(pw) == (ph or "")
+    try:
+        return hashlib.sha256(pw.encode("utf-8")).hexdigest() == (phash or "")
+    except Exception:
+        return False
+
+
+def verify_pw(pw: str, phash: str) -> bool:
+    """Verify password. Supports Argon2 hashes and legacy SHA256 hex hashes.
+    Does not mutate DB here; migration is handled in login flow.
+    """
+    if not phash:
+        return False
+
+    # Argon2 hashes contain '$argon2' as part of the hash string
+    if phash.startswith("$argon2"):
+        try:
+            return ph.verify(phash, pw)
+        except (VerifyMismatchError, VerificationError):
+            return False
+        except Exception as e:
+            logger.exception("Argon2 verification error: %s", e)
+            return False
+
+    # Fallback: legacy SHA256 hex digest
+    return _verify_legacy_sha256(pw, phash)
 
 
 # -----------------------------
@@ -115,10 +154,10 @@ def _fetch_user(username: str) -> Optional[Dict]:
     }
 
 
-def _set_passhash(user_id: int, ph: str) -> None:
+def _set_passhash(user_id: int, phash: str) -> None:
     with conn() as cn:
         c = cn.cursor()
-        c.execute("UPDATE users SET passhash=? WHERE id=?", (ph, user_id))
+        c.execute("UPDATE users SET passhash=? WHERE id= ?", (phash, user_id))
         cn.commit()
 
 
@@ -126,6 +165,9 @@ def _set_passhash(user_id: int, ph: str) -> None:
 # Admin seeding & consistency
 # -----------------------------
 def seed_admin_if_empty():
+    """If no users exist, create a default 'oklub' user in PENDING state (no password).
+    This avoids having a predictable default admin password.
+    """
     try:
         with conn() as cn:
             c = cn.cursor()
@@ -145,18 +187,19 @@ def seed_admin_if_empty():
             """)
             cn.commit()
             if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+                # create pending admin (no password). Admin must be activated via normal flow.
                 c.execute("""
                     INSERT INTO users(username, email, first_name, last_name,
                                       passhash, functions, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
                 """, (
                     "oklub", "admin@oklub.at", "OKlub", "Admin",
-                    hash_pw("OderKlub!"), "Admin"
+                    "", "Admin"
                 ))
                 cn.commit()
-                print("✅ Default-Admin 'oklub' wurde angelegt (Passwort: OderKlub!)")
+                logger.info("Default admin 'oklub' created in PENDING state. Set password and activate via admin flow.")
     except Exception as e:
-        print(f"⚠️ Fehler in seed_admin_if_empty(): {e}")
+        logger.exception("Error in seed_admin_if_empty(): %s", e)
 
 
 def ensure_admin_consistency() -> None:
@@ -176,17 +219,16 @@ def ensure_admin_consistency() -> None:
                 c.execute("""
                     INSERT INTO users(username, email, first_name, last_name,
                                       passhash, functions, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
                 """, (
                     "oklub", "admin@oklub.at", "OKlub", "Admin",
-                    hash_pw("OderKlub!"), "Admin"
+                    "", "Admin"
                 ))
             else:
-                uid, ph = row
-                c.execute("UPDATE users SET functions='Admin', status='active' WHERE id=?", (uid,))
-                if not ph:
-                    c.execute("UPDATE users SET passhash=? WHERE id=?", (hash_pw("OderKlub!"), uid))
-        cn.commit()
+                uid, phash = row
+                # ensure functions set but keep status as pending if there is no password
+                c.execute("UPDATE users SET functions='Admin' WHERE id=?", (uid,))
+            cn.commit()
 
 
 # -----------------------------
@@ -201,15 +243,23 @@ def _do_login(user: str, pw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     if not u or u.get("status") != "active":
         return False, None, None
 
-    ph = u.get("passhash") or ""
-    if not ph:
-        ph = hash_pw(pw)
-        try:
-            _set_passhash(u["id"], ph)
-        except Exception:
+    phash = u.get("passhash") or ""
+
+    # If legacy SHA256 stored, verify and re-hash with Argon2 on success
+    if phash and not phash.startswith("$argon2"):
+        if _verify_legacy_sha256(pw, phash):
+            try:
+                new_hash = hash_pw(pw)
+                _set_passhash(u["id"], new_hash)
+                phash = new_hash
+                logger.info("Upgraded legacy password hash to Argon2 for user %s", uname)
+            except Exception:
+                logger.exception("Failed to migrate legacy hash for user %s", uname)
+                return False, None, None
+        else:
             return False, None, None
 
-    if not verify_pw(pw, ph):
+    if not verify_pw(pw, phash):
         return False, None, None
 
     role = _role_from_functions(u.get("functions") or "")
@@ -238,7 +288,7 @@ def register_user(username: str, first_name: str, last_name: str, email: str, pa
 
     with conn() as cn:
         c = cn.cursor()
-        if c.execute("SELECT 1 FROM users WHERE username=?", (username.strip(),)).fetchone():
+        if c.execute("SELECT 1 FROM users WHERE username= ?", (username.strip(),)).fetchone():
             return False, "Benutzername ist bereits vergeben."
         c.execute("""
             INSERT INTO users(username, email, first_name, last_name,
@@ -350,3 +400,6 @@ def admin_set_password(username: str, new_pw: str) -> Tuple[bool, str]:
         c.execute("UPDATE users SET passhash=? WHERE username=?", (hash_pw(new_pw), username))
         cn.commit()
     return True, "Passwort gesetzt."
+
+
+# End of file
